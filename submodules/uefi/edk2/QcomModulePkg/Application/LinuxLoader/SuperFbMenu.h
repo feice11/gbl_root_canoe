@@ -361,7 +361,7 @@ SfbWaitForKey (IN UINT32 TimeoutMs);
 /* ---- shared console helpers (SuperFbMenu.c) ----------------------------- */
 
 /* Rows of list content a screen shows before it starts scrolling. */
-#define SFB_VISIBLE_ROWS  12
+#define SFB_VISIBLE_ROWS  8
 
 VOID
 SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle OPTIONAL);

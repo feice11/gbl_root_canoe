@@ -145,6 +145,8 @@
 
 [Protocols]
 	gEfiSimpleTextInputExProtocolGuid
+	gEfiGraphicsOutputProtocolGuid
+	gEfiHiiFontProtocolGuid
 	gEfiBlockIoProtocolGuid
 	gEfiLoadedImageProtocolGuid
 	gEfiDevicePathToTextProtocolGuid

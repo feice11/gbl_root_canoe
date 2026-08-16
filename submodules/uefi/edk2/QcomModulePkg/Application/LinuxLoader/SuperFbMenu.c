@@ -18,6 +18,8 @@
 #include <Library/ShutdownServices.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
+#include <Protocol/GraphicsOutput.h>
+#include <Protocol/HiiFont.h>
 #include <Protocol/SimpleTextIn.h>
 
 /* Keeps the translation unit legal when the feature is compiled out. */
@@ -42,6 +44,121 @@ CONST CHAR8 *gSfbMenuModuleTag = "SuperFbMenu";
 /* Leave the final physical column unused: several firmware consoles wrap as
  * soon as it is written, which would otherwise insert a blank line per row. */
 STATIC UINTN  mSfbColumns = 79;
+STATIC BOOLEAN                       mSfbGraphical = FALSE;
+STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL  *mSfbGop = NULL;
+STATIC EFI_HII_FONT_PROTOCOL         *mSfbHiiFont = NULL;
+STATIC UINTN                         mSfbGfxY = 0;
+
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorBackground = { 0x18, 0x12, 0x0d, 0x00 };
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorSurface    = { 0x2d, 0x25, 0x1d, 0x00 };
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorPrimary    = { 0xe8, 0x79, 0x24, 0x00 };
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorText       = { 0xf4, 0xf4, 0xf4, 0x00 };
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorMuted      = { 0xb0, 0xa8, 0x9f, 0x00 };
+
+STATIC
+CONST CHAR16 *
+SfbUiChinese (IN CONST CHAR16 *Text)
+{
+  if (Text == NULL)                         return L"";
+  if (StrCmp (Text, L"Boot Menu") == 0)     return L"启动菜单";
+  if (StrCmp (Text, L"Android Tools") == 0) return L"安卓工具";
+  if (StrCmp (Text, L"Android") == 0)       return L"启动安卓";
+  if (StrCmp (Text, L"Enter Fastboot") == 0)return L"进入 Fastboot";
+  if (StrCmp (Text, L"Enter EFI Program Selector") == 0) return L"选择 EFI 程序";
+  if (StrCmp (Text, L"EFI Program Selector") == 0) return L"EFI 程序选择器";
+  if (StrCmp (Text, L"Power Off") == 0)     return L"关机";
+  if (StrCmp (Text, L"Restart") == 0)       return L"重新启动";
+  if (StrCmp (Text, L"Back") == 0)          return L"返回";
+  if (StrCmp (Text, L"Action failed") == 0) return L"操作失败";
+  if (StrCmp (Text, L"Action complete") == 0) return L"操作完成";
+  if (StrCmp (Text, L"Launching") == 0)     return L"正在启动";
+  if (StrCmp (Text, L"Power") == 0)         return L"电源选项";
+  if (StrCmp (Text, L"Boot control") == 0)  return L"启动控制";
+  if (StrCmp (Text, L"Fastboot") == 0)      return L"Fastboot 模式";
+  if (StrCmp (Text, L"Reboot Tools") == 0)  return L"重启工具";
+  if (StrCmp (Text, L"BL Tools") == 0)      return L"引导锁工具";
+  if (StrCmp (Text, L"ARB Tools") == 0)     return L"防回滚工具";
+  return Text;
+}
+
+STATIC
+VOID
+SfbGfxFill (IN UINTN X, IN UINTN Y, IN UINTN Width, IN UINTN Height,
+            IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color)
+{
+  if (!mSfbGraphical || Width == 0 || Height == 0) {
+    return;
+  }
+  mSfbGop->Blt (mSfbGop, Color, EfiBltVideoFill, 0, 0, X, Y,
+                Width, Height, 0);
+}
+
+STATIC
+EFI_STATUS
+SfbGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size,
+            IN CONST CHAR16 *Text,
+            IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color)
+{
+  EFI_FONT_DISPLAY_INFO  Info;
+  EFI_IMAGE_OUTPUT       Output;
+  EFI_IMAGE_OUTPUT       *OutputPtr = &Output;
+
+  if (!mSfbGraphical || Text == NULL) {
+    return EFI_UNSUPPORTED;
+  }
+
+  ZeroMem (&Info, sizeof (Info));
+  Info.ForegroundColor = *Color;
+  Info.BackgroundColor = mSfbColorBackground;
+  Info.FontInfoMask = EFI_FONT_INFO_SYS_FONT | EFI_FONT_INFO_SYS_STYLE |
+                      EFI_FONT_INFO_RESIZE;
+  Info.FontInfo.FontSize = Size;
+
+  ZeroMem (&Output, sizeof (Output));
+  Output.Width = (UINT16)mSfbGop->Mode->Info->HorizontalResolution;
+  Output.Height = (UINT16)mSfbGop->Mode->Info->VerticalResolution;
+  Output.Image.Screen = mSfbGop;
+
+  return mSfbHiiFont->StringToImage (
+                        mSfbHiiFont,
+                        EFI_HII_OUT_FLAG_CLIP |
+                        EFI_HII_OUT_FLAG_CLIP_CLEAN_X |
+                        EFI_HII_OUT_FLAG_CLIP_CLEAN_Y |
+                        EFI_HII_OUT_FLAG_TRANSPARENT |
+                        EFI_HII_IGNORE_LINE_BREAK |
+                        EFI_HII_DIRECT_TO_SCREEN,
+                        (EFI_STRING)Text,
+                        &Info,
+                        &OutputPtr,
+                        X,
+                        Y,
+                        NULL,
+                        NULL,
+                        NULL
+                        );
+}
+
+STATIC
+VOID
+SfbUiInitGraphics (VOID)
+{
+  EFI_STATUS  GopStatus;
+  EFI_STATUS  FontStatus;
+
+  if (mSfbGraphical) {
+    return;
+  }
+  GopStatus = gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL,
+                                   (VOID **)&mSfbGop);
+  FontStatus = gBS->LocateProtocol (&gEfiHiiFontProtocolGuid, NULL,
+                                    (VOID **)&mSfbHiiFont);
+  mSfbGraphical = (BOOLEAN)(!EFI_ERROR (GopStatus) &&
+                            !EFI_ERROR (FontStatus) &&
+                            mSfbGop != NULL && mSfbGop->Mode != NULL &&
+                            mSfbGop->Mode->Info != NULL &&
+                            mSfbGop->Mode->Info->HorizontalResolution <= MAX_UINT16 &&
+                            mSfbGop->Mode->Info->VerticalResolution <= MAX_UINT16);
+}
 
 STATIC
 VOID
@@ -79,6 +196,16 @@ SfbUiFullRow (IN UINTN Attribute, IN CONST CHAR16 *Text)
 
   if (Text == NULL) {
     Text = L"";
+  }
+
+  if (mSfbGraphical) {
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *Color;
+
+    Color = (Attribute == SFB_ATTR_ERROR) ? &mSfbColorPrimary :
+            (Attribute == SFB_ATTR_MUTED) ? &mSfbColorMuted : &mSfbColorText;
+    SfbGfxText (72, mSfbGfxY, 30, SfbUiChinese (Text), Color);
+    mSfbGfxY += 58;
+    return;
   }
 
   StrnCpyS (Line, ARRAY_SIZE (Line), Text, mSfbColumns);
@@ -189,6 +316,27 @@ VOID
 SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
 {
   CHAR16  Header[SFB_UI_LINE_CHARS];
+  UINTN   Width;
+
+  SfbUiInitGraphics ();
+  if (mSfbGraphical) {
+    Width = mSfbGop->Mode->Info->HorizontalResolution;
+    SfbGfxFill (0, 0, Width,
+                mSfbGop->Mode->Info->VerticalResolution,
+                &mSfbColorBackground);
+    SfbGfxFill (0, 0, Width, 168, &mSfbColorSurface);
+    SfbGfxFill (0, 164, Width, 4, &mSfbColorPrimary);
+    UnicodeSPrint (Header, sizeof (Header), L"CANOE  /  %s",
+                   SfbUiChinese (Title));
+    SfbGfxText (72, 42, 46, Header, &mSfbColorText);
+    if (Subtitle != NULL) {
+      SfbGfxText (72, 184, 24, SfbUiChinese (Subtitle), &mSfbColorMuted);
+      mSfbGfxY = 238;
+    } else {
+      mSfbGfxY = 204;
+    }
+    return;
+  }
 
   SfbUiRefreshGeometry ();
   gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
@@ -210,6 +358,18 @@ SfbEndScreen (IN CONST CHAR16 *Footer)
 {
   CHAR16  Hint[SFB_UI_LINE_CHARS];
 
+  if (mSfbGraphical) {
+    UINTN  Width = mSfbGop->Mode->Info->HorizontalResolution;
+    UINTN  Height = mSfbGop->Mode->Info->VerticalResolution;
+
+    SfbGfxFill (0, Height - 112, Width, 112, &mSfbColorSurface);
+    SfbGfxFill (0, Height - 116, Width, 4, &mSfbColorPrimary);
+    SfbGfxText (72, Height - 79, 26,
+                L"音量 +/-：移动      电源键：确认",
+                &mSfbColorMuted);
+    return;
+  }
+
   SfbUiFullRow (SFB_ATTR_NORMAL, L"");
   SfbUiRule ();
   UnicodeSPrint (Hint, sizeof (Hint), L"  [VOL +/-] Navigate    [POWER] %s",
@@ -221,6 +381,20 @@ VOID
 SfbDrawRow (IN BOOLEAN Selected, IN CONST CHAR16 *Marker, IN CONST CHAR16 *Text)
 {
   CHAR16  Row[SFB_UI_LINE_CHARS];
+
+  if (mSfbGraphical) {
+    UINTN  Width = mSfbGop->Mode->Info->HorizontalResolution;
+    UINTN  CardWidth = Width - 144;
+
+    SfbGfxFill (72, mSfbGfxY, CardWidth, 82,
+                Selected ? &mSfbColorPrimary : &mSfbColorSurface);
+    SfbGfxText (98, mSfbGfxY + 25, 22, Marker,
+                Selected ? &mSfbColorText : &mSfbColorMuted);
+    SfbGfxText (220, mSfbGfxY + 20, 32, SfbUiChinese (Text),
+                &mSfbColorText);
+    mSfbGfxY += 96;
+    return;
+  }
 
   UnicodeSPrint (Row, sizeof (Row), L"  %s  %-6s  %s",
                  Selected ? L">" : L" ", Marker, Text);
@@ -363,7 +537,7 @@ SfbDrawMenu (IN CONST SFB_MENU_STATE *Menu,
   CHAR16  Summary[SFB_UI_LINE_CHARS];
 
   UnicodeSPrint (Summary, sizeof (Summary),
-                 L"%u entries  /  * saved default", (UINT32)Menu->Count);
+                 L"%u 个启动项  /  * 表示默认项", (UINT32)Menu->Count);
   SfbBeginScreen (Title, Summary);
 
   if (Menu->Count == 0) {
