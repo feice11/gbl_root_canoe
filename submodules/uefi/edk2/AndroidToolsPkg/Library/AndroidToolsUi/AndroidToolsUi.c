@@ -1,8 +1,8 @@
 /** @file
  * Shared graphical UI for every AndroidToolsPkg application.
  *
- * BootMenu passes CUI2|<language>|<theme>|<clock-offset>|<clock-valid> through
- * EFI LoadOptions.  Legacy CUI1 records remain accepted.  This keeps every
+ * BootMenu passes CUI3|<language>|<theme>|<clock-offset>|<clock-valid>|<tips>
+ * through EFI LoadOptions. Legacy CUI1/CUI2 records remain accepted.
  * tool visually and linguistically in sync without writing a second settings
  * store. Volume up/down move, power confirms; menu confirmation is protected
  * by the same quiet-window debounce used by BootMenu.
@@ -48,6 +48,7 @@ STATIC UINTN                         mAtRowStep = 118;
 STATIC UINTN                         mAtVisibleRows = CANOE_UI_VISIBLE_MIN;
 STATIC UINTN                         mAtClockOffsetSeconds = 0;
 STATIC BOOLEAN                       mAtClockValid = FALSE;
+STATIC BOOLEAN                       mAtDescriptions = TRUE;
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mAtBackground;
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mAtSurface;
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mAtPrimary;
@@ -188,6 +189,16 @@ AtGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size, IN CONST CHAR16 *Text,
   UINTN                          Dy;
   UINTN                          Sx;
   UINTN                          Sy;
+  UINTN                          SxFixed;
+  UINTN                          SyFixed;
+  UINTN                          Fx;
+  UINTN                          Fy;
+  UINTN                          SxNext;
+  UINTN                          SyNext;
+  UINTN                          A00;
+  UINTN                          A10;
+  UINTN                          A01;
+  UINTN                          A11;
   UINTN                          Advance;
   UINTN                          Alpha;
   EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *Pixel;
@@ -248,19 +259,36 @@ AtGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size, IN CONST CHAR16 *Text,
     Advance = ((UINTN)Glyph->Advance * Size + SFB_FONT_HEIGHT - 1) /
               SFB_FONT_HEIGHT;
     for (Dy = 0; Dy < Height; Dy++) {
-      Sy = Dy * SFB_FONT_HEIGHT / Size;
+      SyFixed = (Height > 1)
+                  ? Dy * (SFB_FONT_HEIGHT - 1) * 256 / (Height - 1) : 0;
+      Sy = SyFixed >> 8;
+      Fy = SyFixed & 0xff;
+      SyNext = MIN (Sy + 1, (UINTN)SFB_FONT_HEIGHT - 1);
       for (Dx = 0; Dx < Advance && Cursor + Dx < Width; Dx++) {
-        Sx = Dx * Glyph->Advance / Advance;
-        Alpha = Glyph->Bitmap[Sy * SFB_FONT_STRIDE + Sx / 2];
-        Alpha = ((Sx & 1) == 0) ? (Alpha >> 4) : (Alpha & 0x0f);
+        SxFixed = (Advance > 1 && Glyph->Advance > 1)
+                    ? Dx * (Glyph->Advance - 1) * 256 / (Advance - 1) : 0;
+        Sx = SxFixed >> 8;
+        Fx = SxFixed & 0xff;
+        SxNext = MIN (Sx + 1, (UINTN)Glyph->Advance - 1);
+#define AT_ALPHA_AT(_x, _y) \
+  ((((_x) & 1) == 0) \
+      ? (Glyph->Bitmap[(_y) * SFB_FONT_STRIDE + (_x) / 2] >> 4) \
+      : (Glyph->Bitmap[(_y) * SFB_FONT_STRIDE + (_x) / 2] & 0x0f)) * 17)
+        A00 = AT_ALPHA_AT (Sx, Sy);
+        A10 = AT_ALPHA_AT (SxNext, Sy);
+        A01 = AT_ALPHA_AT (Sx, SyNext);
+        A11 = AT_ALPHA_AT (SxNext, SyNext);
+        Alpha = (((A00 * (256 - Fx) + A10 * Fx) * (256 - Fy)) +
+                 ((A01 * (256 - Fx) + A11 * Fx) * Fy) + 32768) >> 16;
+#undef AT_ALPHA_AT
         if (Alpha != 0) {
           Pixel = &Buffer[Dy * Width + Cursor + Dx];
           Pixel->Blue = (UINT8)((Color->Blue * Alpha +
-                                 Pixel->Blue * (15 - Alpha) + 7) / 15);
+                                 Pixel->Blue * (255 - Alpha) + 127) / 255);
           Pixel->Green = (UINT8)((Color->Green * Alpha +
-                                  Pixel->Green * (15 - Alpha) + 7) / 15);
+                                  Pixel->Green * (255 - Alpha) + 127) / 255);
           Pixel->Red = (UINT8)((Color->Red * Alpha +
-                                Pixel->Red * (15 - Alpha) + 7) / 15);
+                                Pixel->Red * (255 - Alpha) + 127) / 255);
         }
       }
     }
@@ -332,6 +360,7 @@ AtDrawStatusBar (VOID)
   UINTN BatteryY;
   UINTN FillWidth;
   UINTN LocalSeconds;
+  UINTN PercentWidth;
 
   if (!mAtGraphical || mAtSafeTop < 48) return;
   Width = mAtGop->Mode->Info->HorizontalResolution;
@@ -346,21 +375,22 @@ AtDrawStatusBar (VOID)
   } else {
     StrCpyS (TimeText, ARRAY_SIZE (TimeText), L"--:--");
   }
-  AtGfxText (CANOE_UI_SIDE_MARGIN, StatusY, CANOE_UI_STATUS_FONT,
+  AtGfxText (CANOE_UI_STATUS_INSET, StatusY, CANOE_UI_STATUS_FONT,
              TimeText, &mAtText);
   AtReadPowerStatus (&Available, &Percent, &Charging);
   UnicodeSPrint (PercentText, sizeof (PercentText),
                  Available ? L"%u%%" : L"--%%", (UINT32)Percent);
-  BatteryX = Width - 220;
-  BatteryY = StatusY + 3;
-  AtGfxFill (BatteryX, BatteryY, 56, 3, &mAtMuted);
-  AtGfxFill (BatteryX, BatteryY + 25, 56, 3, &mAtMuted);
-  AtGfxFill (BatteryX, BatteryY, 3, 28, &mAtMuted);
-  AtGfxFill (BatteryX + 53, BatteryY, 3, 28, &mAtMuted);
-  AtGfxFill (BatteryX + 56, BatteryY + 8, 5, 12, &mAtMuted);
+  PercentWidth = AtGfxMeasureText (CANOE_UI_STATUS_FONT, PercentText);
+  BatteryX = Width - CANOE_UI_STATUS_INSET - PercentWidth - 94;
+  BatteryY = StatusY + 4;
+  AtGfxFill (BatteryX, BatteryY, 64, 3, &mAtMuted);
+  AtGfxFill (BatteryX, BatteryY + 31, 64, 3, &mAtMuted);
+  AtGfxFill (BatteryX, BatteryY, 3, 34, &mAtMuted);
+  AtGfxFill (BatteryX + 61, BatteryY, 3, 34, &mAtMuted);
+  AtGfxFill (BatteryX + 64, BatteryY + 10, 6, 14, &mAtMuted);
   if (Available && Percent != 0) {
-    FillWidth = MAX (2, 46 * Percent / 100);
-    AtGfxFill (BatteryX + 5, BatteryY + 5, FillWidth, 18,
+    FillWidth = MAX (2, 54 * Percent / 100);
+    AtGfxFill (BatteryX + 5, BatteryY + 5, FillWidth, 24,
                Charging ? &mAtPrimary : &mAtText);
   }
   if (Charging) {
@@ -368,7 +398,8 @@ AtDrawStatusBar (VOID)
     AtGfxFill (BatteryX - 24, BatteryY + 8, 13, 8, &mAtPrimary);
     AtGfxFill (BatteryX - 18, BatteryY + 14, 7, 11, &mAtPrimary);
   }
-  AtGfxText (Width - 140, StatusY, CANOE_UI_STATUS_FONT,
+  AtGfxText (Width - CANOE_UI_STATUS_INSET - PercentWidth, StatusY,
+             CANOE_UI_STATUS_FONT,
              PercentText, &mAtText);
 }
 
@@ -379,6 +410,7 @@ AtUiInitialize (IN EFI_HANDLE ImageHandle)
   CONST CHAR16               *Options;
   EFI_STATUS                 Status;
   CONST CHAR16               *ClockFlag;
+  CONST CHAR16               *DescriptionFlag;
 
   if (!EFI_ERROR (gBS->HandleProtocol (ImageHandle,
                                        &gEfiLoadedImageProtocolGuid,
@@ -387,16 +419,25 @@ AtUiInitialize (IN EFI_HANDLE ImageHandle)
       LoadedImage->LoadOptionsSize >= 9 * sizeof (CHAR16)) {
     Options = (CONST CHAR16 *)LoadedImage->LoadOptions;
     if ((StrnCmp (Options, L"CUI1|", 5) == 0 ||
-         StrnCmp (Options, L"CUI2|", 5) == 0) &&
+         StrnCmp (Options, L"CUI2|", 5) == 0 ||
+         StrnCmp (Options, L"CUI3|", 5) == 0) &&
         (Options[5] == L'0' || Options[5] == L'1') &&
         Options[6] == L'|' && Options[7] >= L'0' &&
         Options[7] < L'0' + AT_THEME_COUNT) {
       mAtChinese = (BOOLEAN)(Options[5] == L'0');
       mAtTheme = Options[7] - L'0';
-      if (StrnCmp (Options, L"CUI2|", 5) == 0 && Options[8] == L'|') {
+      if ((StrnCmp (Options, L"CUI2|", 5) == 0 ||
+           StrnCmp (Options, L"CUI3|", 5) == 0) && Options[8] == L'|') {
         mAtClockOffsetSeconds = StrDecimalToUintn (Options + 9) % 86400;
         ClockFlag = StrStr (Options + 9, L"|");
         mAtClockValid = (BOOLEAN)(ClockFlag != NULL && ClockFlag[1] == L'1');
+        if (StrnCmp (Options, L"CUI3|", 5) == 0 && ClockFlag != NULL) {
+          DescriptionFlag = StrStr (ClockFlag + 1, L"|");
+          if (DescriptionFlag != NULL &&
+              (DescriptionFlag[1] == L'0' || DescriptionFlag[1] == L'1')) {
+            mAtDescriptions = (BOOLEAN)(DescriptionFlag[1] == L'1');
+          }
+        }
       }
     }
   }
@@ -614,6 +655,9 @@ AtUiEndScreen (IN CONST CHAR16 *Footer)
   UINTN  Height;
   Footer = (Footer != NULL) ? AtUiLocalize (Footer) : NULL;
   if (mAtGraphical) {
+    UINT16 FooterSize;
+    UINTN FooterWidth;
+
     if (Footer == NULL) return;
     Width = mAtGop->Mode->Info->HorizontalResolution;
     Height = mAtGop->Mode->Info->VerticalResolution;
@@ -621,13 +665,81 @@ AtUiEndScreen (IN CONST CHAR16 *Footer)
                CANOE_UI_FOOTER_HEIGHT, &mAtSurface);
     AtGfxFill (0, Height - CANOE_UI_FOOTER_HEIGHT - 4,
                Width, 4, &mAtPrimary);
-    AtGfxText (CANOE_UI_SIDE_MARGIN, Height - 76,
-               AtGfxFitText (CANOE_UI_FOOTER_FONT, 22,
-                             Width - 2 * CANOE_UI_SIDE_MARGIN, Footer),
-               Footer, &mAtMuted);
+    FooterSize = AtGfxFitText (CANOE_UI_FOOTER_FONT, 22,
+                               Width - 2 * CANOE_UI_SIDE_MARGIN, Footer);
+    FooterWidth = AtGfxMeasureText (FooterSize, Footer);
+    AtGfxText ((Width > FooterWidth) ? (Width - FooterWidth) / 2 : 0,
+               Height - 76, FooterSize, Footer, &mAtMuted);
     return;
   }
   if (Footer != NULL) Print (L"\r\n%s\r\n", Footer);
+}
+
+STATIC
+VOID
+AtGfxWrappedText (IN UINTN X, IN UINTN Y, IN UINTN Available,
+                  IN UINT16 Size, IN CONST CHAR16 *Text,
+                  IN UINTN MaxLines,
+                  IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color)
+{
+  CHAR16 Line[96];
+  UINTN Start = 0;
+  UINTN Length;
+  UINTN Count;
+  UINTN Break;
+  UINTN LineIndex;
+
+  if (Text == NULL) return;
+  Length = StrLen (Text);
+  for (LineIndex = 0; LineIndex < MaxLines && Start < Length; LineIndex++) {
+    Count = 1;
+    while (Start + Count <= Length && Count < ARRAY_SIZE (Line)) {
+      StrnCpyS (Line, ARRAY_SIZE (Line), Text + Start, Count);
+      if (AtGfxMeasureText (Size, Line) > Available) break;
+      Count++;
+    }
+    if (Start + Count > Length) Count = Length - Start;
+    else if (Count > 1) Count--;
+    Break = Count;
+    if (Start + Count < Length) {
+      while (Break > 1 && Text[Start + Break - 1] != L' ') Break--;
+      if (Break > 1) Count = Break;
+    }
+    StrnCpyS (Line, ARRAY_SIZE (Line), Text + Start, Count);
+    AtGfxText (X, Y + LineIndex * (Size + 12), Size, Line, Color);
+    Start += Count;
+    while (Start < Length && Text[Start] == L' ') Start++;
+  }
+}
+
+STATIC
+VOID
+AtDrawDescriptionCard (IN CONST CHAR16 *Title, IN CONST CHAR16 *Description)
+{
+  UINTN Width;
+  UINTN Height;
+  UINTN BoxX;
+  UINTN BoxY;
+  UINTN BoxWidth;
+  UINTN BoxHeight = 238;
+  UINT16 TitleSize;
+
+  if (!mAtGraphical || !mAtDescriptions || Description == NULL) return;
+  Title = AtUiLocalize (Title);
+  Description = AtUiLocalize (Description);
+  Width = mAtGop->Mode->Info->HorizontalResolution;
+  Height = mAtGop->Mode->Info->VerticalResolution;
+  BoxX = CANOE_UI_STATUS_INSET;
+  BoxWidth = Width - 2 * CANOE_UI_STATUS_INSET;
+  BoxY = Height - CANOE_UI_FOOTER_HEIGHT - BoxHeight - 34;
+  AtGfxFill (BoxX + 12, BoxY + 14, BoxWidth, BoxHeight, &mAtBackground);
+  AtGfxFill (BoxX, BoxY, BoxWidth, BoxHeight, &mAtSurface);
+  AtGfxFill (BoxX, BoxY, 6, BoxHeight, &mAtPrimary);
+  AtGfxFill (BoxX, BoxY, BoxWidth, 3, &mAtPrimary);
+  TitleSize = AtGfxFitText (34, 26, BoxWidth - 70, Title);
+  AtGfxText (BoxX + 34, BoxY + 26, TitleSize, Title, &mAtText);
+  AtGfxWrappedText (BoxX + 34, BoxY + 88, BoxWidth - 70, 28,
+                    Description, 3, &mAtMuted);
 }
 
 VOID
@@ -821,6 +933,17 @@ EFI_STATUS
 AtUiRunMenu (IN CONST CHAR16 *Title, IN CONST CHAR16 **Items, IN UINTN Count,
              OUT UINTN *Selected, IN CONST CHAR16 *Footer)
 {
+  return AtUiRunMenuWithDescriptions (Title, Items, NULL, Count,
+                                      Selected, Footer);
+}
+
+EFI_STATUS
+AtUiRunMenuWithDescriptions (IN CONST CHAR16 *Title,
+                             IN CONST CHAR16 **Items,
+                             IN CONST CHAR16 **Descriptions,
+                             IN UINTN Count, OUT UINTN *Selected,
+                             IN CONST CHAR16 *Footer)
+{
   UINTN   Cursor = 0;
   UINTN   Start;
   UINTN   Index;
@@ -839,7 +962,13 @@ AtUiRunMenu (IN CONST CHAR16 *Title, IN CONST CHAR16 **Items, IN UINTN Count,
                        L" ", Items[Index]);
     }
     AtUiEndScreen (Footer);
-    Key = AtUiWaitForKey (0);
+    Key = AtUiWaitForKey ((mAtDescriptions && Descriptions != NULL &&
+                           Descriptions[Cursor] != NULL) ? 2000 : 0);
+    if (Key == AtKeyTimeout && mAtDescriptions && Descriptions != NULL &&
+        Descriptions[Cursor] != NULL) {
+      AtDrawDescriptionCard (Items[Cursor], Descriptions[Cursor]);
+      Key = AtUiWaitForKey (0);
+    }
     if (Key == AtKeySelect) {
       AtUiDebounce ();
       *Selected = Cursor;

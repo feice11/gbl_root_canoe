@@ -340,6 +340,9 @@ SfbRunFileBrowser (VOID);
 VOID
 SfbShowFastbootMode (VOID);
 
+VOID
+SfbDrawFastbootScreen (IN BOOLEAN Connected, IN UINTN Cursor);
+
 /*
  * Clear the console, show "Entering Boot Menu", and hold for a few seconds so
  * a volume key still held from power-on is released before the menu starts
@@ -401,6 +404,9 @@ SfbUiLanguage (VOID);
 
 UINTN
 SfbUiTheme (VOID);
+
+BOOLEAN
+SfbUiDescriptionsEnabled (VOID);
 
 /* Return the Android-calibrated seconds added to the firmware RTC. */
 BOOLEAN

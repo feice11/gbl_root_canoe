@@ -259,6 +259,16 @@ ArbToolsEntry (
     L"Reset ARB Value",
     L"Back",
   };
+  STATIC CONST CHAR16 *DescriptionsEn[] = {
+    L"Read and display all non-zero anti-rollback indexes.",
+    L"Reset anti-rollback indexes after a two-stage safety confirmation.",
+    L"Return to the Android Tools menu.",
+  };
+  STATIC CONST CHAR16 *DescriptionsZh[] = {
+    L"读取并显示所有非零的防回滚索引。",
+    L"经过二段式安全确认后重置防回滚索引。",
+    L"返回 Android Tools 菜单。",
+  };
   UINTN      Sel;
   EFI_STATUS Status;
 
@@ -272,8 +282,10 @@ ArbToolsEntry (
   AtUiEnterMenu (L"ARB Tools");
 
   while (TRUE) {
-    Status = AtUiRunMenu (L"ARB Tools", Items, ARRAY_SIZE (Items), &Sel,
-                          L"Vol+/- move, power select");
+    Status = AtUiRunMenuWithDescriptions (
+               L"ARB Tools", Items,
+               AtUiIsChinese () ? DescriptionsZh : DescriptionsEn,
+               ARRAY_SIZE (Items), &Sel, L"Vol+/- move, power select");
     if (EFI_ERROR (Status)) {
       continue;
     }

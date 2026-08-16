@@ -169,6 +169,16 @@ MiniGamesEntry (
     L"Reaction Challenge",
     L"Back",
   };
+  STATIC CONST CHAR16 *DescriptionsEn[] = {
+    L"Guess a hidden number with higher and lower hints.",
+    L"Test your reaction time over three rounds.",
+    L"Return to the Android Tools menu.",
+  };
+  STATIC CONST CHAR16 *DescriptionsZh[] = {
+    L"根据偏大或偏小提示猜出隐藏数字。",
+    L"通过三轮挑战测试你的反应速度。",
+    L"返回 Android Tools 菜单。",
+  };
   UINTN       Selected;
   EFI_STATUS  Status;
   UINT32      RandomState = GameSeed ();
@@ -176,8 +186,11 @@ MiniGamesEntry (
   AtUiInitialize (ImageHandle);
   AtUiEnterMenu (L"Mini Games");
   while (TRUE) {
-    Status = AtUiRunMenu (L"Mini Games", Items, ARRAY_SIZE (Items), &Selected,
-                          L"Vol+/- move, power select");
+    Status = AtUiRunMenuWithDescriptions (
+               L"Mini Games", Items,
+               AtUiIsChinese () ? DescriptionsZh : DescriptionsEn,
+               ARRAY_SIZE (Items), &Selected,
+               L"Vol+/- move, power select");
     if (EFI_ERROR (Status)) continue;
     if (Selected == 0) PlayGuessNumber (&RandomState);
     else if (Selected == 1) PlayReaction (&RandomState);

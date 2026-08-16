@@ -138,6 +138,20 @@ RebootToolsEntry (
     L"Reboot to System",
     L"Back",
   };
+  STATIC CONST CHAR16 *DescriptionsEn[] = {
+    L"Restart into Android userspace fastbootd for dynamic partition work.",
+    L"Restart into the device bootloader mode.",
+    L"Restart into the recovery environment.",
+    L"Restart normally into Android.",
+    L"Return to the Android Tools menu.",
+  };
+  STATIC CONST CHAR16 *DescriptionsZh[] = {
+    L"重启到安卓用户空间 Fastbootd，用于动态分区操作。",
+    L"重启到设备 Bootloader 模式。",
+    L"重启到 Recovery 恢复环境。",
+    L"正常重启并进入安卓系统。",
+    L"返回 Android Tools 菜单。",
+  };
   UINTN      Sel;
   EFI_STATUS Status;
 
@@ -151,8 +165,10 @@ RebootToolsEntry (
   AtUiEnterMenu (L"Reboot Tools");
 
   while (TRUE) {
-    Status = AtUiRunMenu (L"Reboot Tools", Items, ARRAY_SIZE (Items), &Sel,
-                          L"Vol+/- move, power select");
+    Status = AtUiRunMenuWithDescriptions (
+               L"Reboot Tools", Items,
+               AtUiIsChinese () ? DescriptionsZh : DescriptionsEn,
+               ARRAY_SIZE (Items), &Sel, L"Vol+/- move, power select");
     if (EFI_ERROR (Status)) {
       continue;
     }

@@ -12,7 +12,8 @@
 #include <Protocol/GraphicsOutput.h>
 
 #define CANOE_UI_SIDE_MARGIN       72
-#define CANOE_UI_STATUS_FONT       32
+#define CANOE_UI_STATUS_FONT       40
+#define CANOE_UI_STATUS_INSET      112
 #define CANOE_UI_TITLE_FONT        52
 #define CANOE_UI_SUBTITLE_FONT     30
 #define CANOE_UI_BODY_FONT         42

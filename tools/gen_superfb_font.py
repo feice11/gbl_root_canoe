@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the built-in 4-bit-alpha SuperFb UI font from Microsoft YaHei.
+"""Generate the built-in 4-bit-alpha Canoe UI font from Microsoft YaHei.
 
 The generated header is checked in so Linux/CI builds do not depend on a host
 font or Pillow. Re-run this script only when the UI character set changes.
@@ -11,8 +11,9 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "submodules/uefi/edk2/QcomModulePkg/Application/LinuxLoader/SuperFbFont.h"
 FONT = Path(r"C:\Windows\Fonts\msyh.ttc")
-HEIGHT = 48
-STRIDE = 24  # two 4-bit alpha pixels per byte
+HEIGHT = 72
+STRIDE = 36  # two 4-bit alpha pixels per byte
+SUPERSAMPLE = 3
 ASCII = "".join(chr(i) for i in range(32, 127))
 CJK = "启动菜单安卓工具进入程序选择器关机重新返回操作失败完成正在电源项控制模式重引导锁防回滚个表示默认音量移动键确认设置配色主题蓝紫绿橙简易密码关闭保存已更改输入错误重试数字位当前下一页退出解锁：不第定度方请顺行按备到的读法访服该和候加件禁就卷开览临浏录目内驱取稍时是所添未文问无务绪言要应用语载找中准足"
 CJK += "初打管后化继接理连脑使始态续状"
@@ -32,18 +33,25 @@ CHARS = ASCII + "".join(dict.fromkeys(CJK))
 
 
 def render(ch: str):
-    font = ImageFont.truetype(str(FONT), 39)
+    logical_size = 58
+    font = ImageFont.truetype(str(FONT), logical_size)
     probe = ImageDraw.Draw(Image.new("L", (1, 1), 0))
-    advance = (max(14, min(36, round(probe.textlength(ch, font=font)) + 4))
-               if ord(ch) < 128 else 48)
-    image = Image.new("L", (48, HEIGHT), 0)
-    draw = ImageDraw.Draw(image)
+    advance = (max(20, min(56, round(probe.textlength(ch, font=font)) + 6))
+               if ord(ch) < 128 else HEIGHT)
+
+    # Rasterize at 3x and reduce with Lanczos. The firmware can then resize
+    # this clean master using bilinear alpha sampling without the stair-step
+    # edges produced by the old 48px nearest-neighbour path.
+    high = Image.new("L", (HEIGHT * SUPERSAMPLE, HEIGHT * SUPERSAMPLE), 0)
+    draw = ImageDraw.Draw(high)
+    high_font = ImageFont.truetype(str(FONT), logical_size * SUPERSAMPLE)
     # Keep every glyph on one font baseline. Centering each outline separately
     # makes punctuation float vertically and gives Latin text uneven spacing.
-    box = draw.textbbox((0, 0), ch, font=font, anchor="ls")
-    x = 2 - min(0, box[0])
-    baseline = 41
-    draw.text((x, baseline), ch, fill=255, font=font, anchor="ls")
+    box = draw.textbbox((0, 0), ch, font=high_font, anchor="ls")
+    x = 3 * 3 - min(0, box[0])
+    baseline = 62 * SUPERSAMPLE
+    draw.text((x, baseline), ch, fill=255, font=high_font, anchor="ls")
+    image = high.resize((HEIGHT, HEIGHT), Image.Resampling.LANCZOS)
     pixels = image.load()
     packed = []
     for row in range(HEIGHT):
@@ -59,9 +67,9 @@ lines = [
     "#ifndef __SUPER_FB_FONT_H__",
     "#define __SUPER_FB_FONT_H__",
     "",
-    "#define SFB_FONT_BITMAP_WIDTH  48",
-    "#define SFB_FONT_HEIGHT        48",
-    "#define SFB_FONT_STRIDE        24",
+    "#define SFB_FONT_BITMAP_WIDTH  72",
+    "#define SFB_FONT_HEIGHT        72",
+    "#define SFB_FONT_STRIDE        36",
     "#define SFB_FONT_BYTES         (SFB_FONT_STRIDE * SFB_FONT_HEIGHT)",
     "",
     "typedef struct {",

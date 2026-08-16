@@ -239,6 +239,16 @@ BlToolsEntry (
   CHAR16       LabelUnlock[20];
   CHAR16       LabelCritical[20];
   CONST CHAR16 *Items[3];
+  STATIC CONST CHAR16 *DescriptionsEn[] = {
+    L"Change the normal bootloader lock state after safety confirmation.",
+    L"Change the critical-partition lock state after safety confirmation.",
+    L"Return to the Android Tools menu.",
+  };
+  STATIC CONST CHAR16 *DescriptionsZh[] = {
+    L"经过安全确认后更改普通 Bootloader 锁定状态。",
+    L"经过安全确认后更改关键分区锁定状态。",
+    L"返回 Android Tools 菜单。",
+  };
 
   AtUiInitialize (ImageHandle);
 
@@ -285,8 +295,10 @@ BlToolsEntry (
     Items[1] = LabelCritical;
     Items[2] = L"Back";
 
-    Status = AtUiRunMenu (Title, Items, ARRAY_SIZE (Items), &Sel,
-                          L"Vol+/- move, power select");
+    Status = AtUiRunMenuWithDescriptions (
+               Title, Items,
+               AtUiIsChinese () ? DescriptionsZh : DescriptionsEn,
+               ARRAY_SIZE (Items), &Sel, L"Vol+/- move, power select");
     if (EFI_ERROR (Status)) {
       continue;
     }

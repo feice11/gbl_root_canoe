@@ -164,4 +164,14 @@ AtUiRunMenu (
   IN  CONST CHAR16  *Footer OPTIONAL
   );
 
+EFI_STATUS
+AtUiRunMenuWithDescriptions (
+  IN  CONST CHAR16  *Title,
+  IN  CONST CHAR16  **Items,
+  IN  CONST CHAR16  **Descriptions OPTIONAL,
+  IN  UINTN          Count,
+  OUT UINTN         *Selected,
+  IN  CONST CHAR16  *Footer OPTIONAL
+  );
+
 #endif /* __ANDROID_TOOLS_UI_H__ */

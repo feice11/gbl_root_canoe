@@ -99,6 +99,13 @@ found at
 
 /* Global fastboot data */
 static FastbootDeviceData Fbd;
+STATIC BOOLEAN mFbUsbConnected = FALSE;
+
+/* Implemented by LinuxLoader's shared handset UI layer. FastbootLib keeps USB
+ * and command handling independent and only reports display state/cursor. */
+VOID SfbDrawFastbootScreen (IN BOOLEAN Connected, IN UINTN Cursor);
+VOID SfbShowActionScreen (IN CONST CHAR16 *Text);
+STATIC VOID FastbootDrawModeScreen (VOID);
 static USB_DEVICE_DESCRIPTOR_SET DescSet;
 
 STATIC
@@ -355,11 +362,19 @@ EFI_STATUS HandleUsbEvents (VOID)
   if (UsbDeviceEventDeviceStateChange == Msg) {
     if (UsbDeviceStateConnected == Payload.DeviceState) {
       DEBUG ((EFI_D_VERBOSE, "Fastboot Device connected\n"));
+      if (!mFbUsbConnected) {
+        mFbUsbConnected = TRUE;
+        FastbootDrawModeScreen ();
+      }
       /* Queue receive buffer */
       Status = Fbd.UsbDeviceProtocol->Send (0x1, 511, Fbd.gRxBuffer);
     }
     if (UsbDeviceStateDisconnected == Payload.DeviceState) {
       DEBUG ((EFI_D_VERBOSE, "Fastboot Device disconnected\n"));
+      if (mFbUsbConnected) {
+        mFbUsbConnected = FALSE;
+        FastbootDrawModeScreen ();
+      }
     }
   } else if (UsbDeviceEventTransferNotification == Msg) {
     /* Check if the transfer notification is on the Bulk EP and process it*/
@@ -408,15 +423,7 @@ VOID ShutdownDevice (VOID);
 
 #define FB_ACTION_ROWS  2
 
-STATIC CONST CHAR16 *mFbActionRow[FB_ACTION_ROWS] = {
-  L"Power Off",
-  L"Restart",
-};
 STATIC UINTN mFbActionCursor = 0;
-
-#define FB_ATTR_NORMAL    EFI_TEXT_ATTR (EFI_LIGHTGRAY, EFI_BLACK)
-#define FB_ATTR_SELECTED  EFI_TEXT_ATTR (EFI_BLACK, EFI_LIGHTGRAY)
-#define FB_ATTR_TITLE     EFI_TEXT_ATTR (EFI_WHITE, EFI_BLACK)
 
 typedef enum {
   FbActionNone = 0,
@@ -428,38 +435,14 @@ STATIC
 VOID
 FastbootDrawModeScreen (VOID)
 {
-  UINTN  Index;
-
-  gST->ConOut->SetAttribute (gST->ConOut, FB_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
-  gST->ConOut->EnableCursor (gST->ConOut, FALSE);
-
-  Print (L"FASTBOOT MODE\r\n\r\n");
-
-  for (Index = 0; Index < FB_ACTION_ROWS; Index++) {
-    gST->ConOut->SetAttribute (gST->ConOut,
-                               (Index == mFbActionCursor) ? FB_ATTR_SELECTED
-                                                           : FB_ATTR_NORMAL);
-    Print (L"%s %s\r\n",
-           (Index == mFbActionCursor) ? L">" : L" ",
-           mFbActionRow[Index]);
-  }
-
-  gST->ConOut->SetAttribute (gST->ConOut, FB_ATTR_NORMAL);
-  Print (L"\r\nVol Up/Down: move   Power: select\r\n");
+  SfbDrawFastbootScreen (mFbUsbConnected, mFbActionCursor);
 }
 
 STATIC
 VOID
 FastbootShowActionScreen (IN CONST CHAR16 *Text)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, FB_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
-  gST->ConOut->EnableCursor (gST->ConOut, FALSE);
-
-  Print (L"%s\r\n", Text);
-
-  gST->ConOut->SetAttribute (gST->ConOut, FB_ATTR_NORMAL);
+  SfbShowActionScreen (Text);
 }
 
 /*
@@ -524,6 +507,7 @@ EFI_STATUS FastbootInitialize (VOID)
   gBS->Stall (1000000);
   gST->ConIn->Reset (gST->ConIn, FALSE);
   mFbActionCursor = 0;
+  mFbUsbConnected = FALSE;
   FastbootDrawModeScreen ();
 
   /* Wait for USB events in tight loop */
