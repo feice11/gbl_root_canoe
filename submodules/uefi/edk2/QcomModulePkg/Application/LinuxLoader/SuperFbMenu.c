@@ -298,6 +298,12 @@ SfbGfxFitText (IN UINT16 Preferred, IN UINT16 Minimum,
 }
 
 STATIC
+EFI_STATUS
+SfbGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size,
+            IN CONST CHAR16 *Text,
+            IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color);
+
+STATIC
 VOID
 SfbGfxCenteredText (IN UINTN Y, IN UINT16 Preferred, IN UINT16 Minimum,
                     IN CONST CHAR16 *Text,
