@@ -71,6 +71,7 @@
 [Sources]
 	LinuxLoader.c
 	SuperFbMenu.h
+	SuperFbFont.h
 	SuperFbFat.c
 	SuperFbStore.c
 	SuperFbEntries.c
@@ -146,7 +147,6 @@
 [Protocols]
 	gEfiSimpleTextInputExProtocolGuid
 	gEfiGraphicsOutputProtocolGuid
-	gEfiHiiFontProtocolGuid
 	gEfiBlockIoProtocolGuid
 	gEfiLoadedImageProtocolGuid
 	gEfiDevicePathToTextProtocolGuid

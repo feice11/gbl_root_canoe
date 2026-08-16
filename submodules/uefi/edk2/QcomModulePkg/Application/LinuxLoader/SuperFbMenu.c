@@ -9,6 +9,7 @@
  */
 
 #include "SuperFbMenu.h"
+#include "SuperFbFont.h"
 
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
@@ -19,7 +20,6 @@
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
 #include <Protocol/GraphicsOutput.h>
-#include <Protocol/HiiFont.h>
 #include <Protocol/SimpleTextIn.h>
 
 /* Keeps the translation unit legal when the feature is compiled out. */
@@ -46,7 +46,6 @@ CONST CHAR8 *gSfbMenuModuleTag = "SuperFbMenu";
 STATIC UINTN  mSfbColumns = 79;
 STATIC BOOLEAN                       mSfbGraphical = FALSE;
 STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL  *mSfbGop = NULL;
-STATIC EFI_HII_FONT_PROTOCOL         *mSfbHiiFont = NULL;
 STATIC UINTN                         mSfbGfxY = 0;
 
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorBackground = { 0x18, 0x12, 0x0d, 0x00 };
@@ -99,43 +98,103 @@ SfbGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size,
             IN CONST CHAR16 *Text,
             IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color)
 {
-  EFI_FONT_DISPLAY_INFO  Info;
-  EFI_IMAGE_OUTPUT       Output;
-  EFI_IMAGE_OUTPUT       *OutputPtr = &Output;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *Buffer;
+  EFI_STATUS                     Status;
+  CONST SFB_FONT_GLYPH           *Glyph;
+  UINTN                          TextWidth = 0;
+  UINTN                          Width;
+  UINTN                          Height;
+  UINTN                          Cursor;
+  UINTN                          Index;
+  UINTN                          Dx;
+  UINTN                          Dy;
+  UINTN                          Sx;
+  UINTN                          Sy;
+  UINTN                          Advance;
+  UINTN                          GlyphIndex;
 
-  if (!mSfbGraphical || Text == NULL) {
+  if (!mSfbGraphical || Text == NULL || Size == 0) {
     return EFI_UNSUPPORTED;
   }
 
-  ZeroMem (&Info, sizeof (Info));
-  Info.ForegroundColor = *Color;
-  Info.BackgroundColor = mSfbColorBackground;
-  Info.FontInfoMask = EFI_FONT_INFO_SYS_FONT | EFI_FONT_INFO_SYS_STYLE |
-                      EFI_FONT_INFO_RESIZE;
-  Info.FontInfo.FontSize = Size;
+  /* Measure with the same scaled advance used by the raster loop. */
+  for (Index = 0; Text[Index] != L'\0'; Index++) {
+    Glyph = NULL;
+    for (GlyphIndex = 0; GlyphIndex < ARRAY_SIZE (mSfbFontGlyphs); GlyphIndex++) {
+      if (mSfbFontGlyphs[GlyphIndex].Codepoint == Text[Index]) {
+        Glyph = &mSfbFontGlyphs[GlyphIndex];
+        break;
+      }
+    }
+    if (Glyph == NULL) {
+      for (GlyphIndex = 0; GlyphIndex < ARRAY_SIZE (mSfbFontGlyphs); GlyphIndex++) {
+        if (mSfbFontGlyphs[GlyphIndex].Codepoint == L'?') {
+          Glyph = &mSfbFontGlyphs[GlyphIndex];
+          break;
+        }
+      }
+    }
+    if (Glyph != NULL) {
+      TextWidth += ((UINTN)Glyph->Advance * Size + SFB_FONT_HEIGHT - 1) /
+                   SFB_FONT_HEIGHT;
+    }
+  }
 
-  ZeroMem (&Output, sizeof (Output));
-  Output.Width = (UINT16)mSfbGop->Mode->Info->HorizontalResolution;
-  Output.Height = (UINT16)mSfbGop->Mode->Info->VerticalResolution;
-  Output.Image.Screen = mSfbGop;
+  if (X >= mSfbGop->Mode->Info->HorizontalResolution ||
+      Y >= mSfbGop->Mode->Info->VerticalResolution || TextWidth == 0) {
+    return EFI_SUCCESS;
+  }
+  Width = MIN (TextWidth,
+               mSfbGop->Mode->Info->HorizontalResolution - X);
+  Height = MIN ((UINTN)Size,
+                mSfbGop->Mode->Info->VerticalResolution - Y);
+  Buffer = AllocatePool (Width * Height * sizeof (*Buffer));
+  if (Buffer == NULL) {
+    return EFI_OUT_OF_RESOURCES;
+  }
 
-  return mSfbHiiFont->StringToImage (
-                        mSfbHiiFont,
-                        EFI_HII_OUT_FLAG_CLIP |
-                        EFI_HII_OUT_FLAG_CLIP_CLEAN_X |
-                        EFI_HII_OUT_FLAG_CLIP_CLEAN_Y |
-                        EFI_HII_OUT_FLAG_TRANSPARENT |
-                        EFI_HII_IGNORE_LINE_BREAK |
-                        EFI_HII_DIRECT_TO_SCREEN,
-                        (EFI_STRING)Text,
-                        &Info,
-                        &OutputPtr,
-                        X,
-                        Y,
-                        NULL,
-                        NULL,
-                        NULL
-                        );
+  /* Preserve the card/background pixels so the 1-bpp glyph has transparent
+   * off-pixels without depending on HII font or alpha-blending support. */
+  Status = mSfbGop->Blt (mSfbGop, Buffer, EfiBltVideoToBltBuffer,
+                         X, Y, 0, 0, Width, Height,
+                         Width * sizeof (*Buffer));
+  if (EFI_ERROR (Status)) {
+    FreePool (Buffer);
+    return Status;
+  }
+
+  Cursor = 0;
+  for (Index = 0; Text[Index] != L'\0' && Cursor < Width; Index++) {
+    Glyph = NULL;
+    for (GlyphIndex = 0; GlyphIndex < ARRAY_SIZE (mSfbFontGlyphs); GlyphIndex++) {
+      if (mSfbFontGlyphs[GlyphIndex].Codepoint == Text[Index]) {
+        Glyph = &mSfbFontGlyphs[GlyphIndex];
+        break;
+      }
+    }
+    if (Glyph == NULL) {
+      continue;
+    }
+    Advance = ((UINTN)Glyph->Advance * Size + SFB_FONT_HEIGHT - 1) /
+              SFB_FONT_HEIGHT;
+    for (Dy = 0; Dy < Height; Dy++) {
+      Sy = Dy * SFB_FONT_HEIGHT / Size;
+      for (Dx = 0; Dx < Advance && Cursor + Dx < Width; Dx++) {
+        Sx = Dx * Glyph->Advance / Advance;
+        if ((Glyph->Bitmap[Sy * SFB_FONT_STRIDE + Sx / 8] &
+             (0x80 >> (Sx & 7))) != 0) {
+          Buffer[Dy * Width + Cursor + Dx] = *Color;
+        }
+      }
+    }
+    Cursor += Advance;
+  }
+
+  Status = mSfbGop->Blt (mSfbGop, Buffer, EfiBltBufferToVideo,
+                         0, 0, X, Y, Width, Height,
+                         Width * sizeof (*Buffer));
+  FreePool (Buffer);
+  return Status;
 }
 
 STATIC
@@ -143,17 +202,13 @@ VOID
 SfbUiInitGraphics (VOID)
 {
   EFI_STATUS  GopStatus;
-  EFI_STATUS  FontStatus;
 
   if (mSfbGraphical) {
     return;
   }
   GopStatus = gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL,
                                    (VOID **)&mSfbGop);
-  FontStatus = gBS->LocateProtocol (&gEfiHiiFontProtocolGuid, NULL,
-                                    (VOID **)&mSfbHiiFont);
   mSfbGraphical = (BOOLEAN)(!EFI_ERROR (GopStatus) &&
-                            !EFI_ERROR (FontStatus) &&
                             mSfbGop != NULL && mSfbGop->Mode != NULL &&
                             mSfbGop->Mode->Info != NULL &&
                             mSfbGop->Mode->Info->HorizontalResolution <= MAX_UINT16 &&
@@ -328,10 +383,10 @@ SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
     SfbGfxFill (0, 164, Width, 4, &mSfbColorPrimary);
     UnicodeSPrint (Header, sizeof (Header), L"CANOE  /  %s",
                    SfbUiChinese (Title));
-    SfbGfxText (72, 42, 46, Header, &mSfbColorText);
+    SfbGfxText (72, 36, 60, Header, &mSfbColorText);
     if (Subtitle != NULL) {
-      SfbGfxText (72, 184, 24, SfbUiChinese (Subtitle), &mSfbColorMuted);
-      mSfbGfxY = 238;
+      SfbGfxText (72, 184, 32, SfbUiChinese (Subtitle), &mSfbColorMuted);
+      mSfbGfxY = 244;
     } else {
       mSfbGfxY = 204;
     }
@@ -364,7 +419,7 @@ SfbEndScreen (IN CONST CHAR16 *Footer)
 
     SfbGfxFill (0, Height - 112, Width, 112, &mSfbColorSurface);
     SfbGfxFill (0, Height - 116, Width, 4, &mSfbColorPrimary);
-    SfbGfxText (72, Height - 79, 26,
+    SfbGfxText (72, Height - 84, 36,
                 L"音量 +/-：移动      电源键：确认",
                 &mSfbColorMuted);
     return;
@@ -386,13 +441,13 @@ SfbDrawRow (IN BOOLEAN Selected, IN CONST CHAR16 *Marker, IN CONST CHAR16 *Text)
     UINTN  Width = mSfbGop->Mode->Info->HorizontalResolution;
     UINTN  CardWidth = Width - 144;
 
-    SfbGfxFill (72, mSfbGfxY, CardWidth, 82,
+    SfbGfxFill (72, mSfbGfxY, CardWidth, 104,
                 Selected ? &mSfbColorPrimary : &mSfbColorSurface);
-    SfbGfxText (98, mSfbGfxY + 25, 22, Marker,
+    SfbGfxText (98, mSfbGfxY + 34, 30, Marker,
                 Selected ? &mSfbColorText : &mSfbColorMuted);
-    SfbGfxText (220, mSfbGfxY + 20, 32, SfbUiChinese (Text),
+    SfbGfxText (220, mSfbGfxY + 26, 48, SfbUiChinese (Text),
                 &mSfbColorText);
-    mSfbGfxY += 96;
+    mSfbGfxY += 120;
     return;
   }
 
