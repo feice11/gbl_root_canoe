@@ -97,6 +97,37 @@ SfbIsEfiFile (IN CONST CHAR16 *Name)
                    (Ext[3] == L'i' || Ext[3] == L'I'));
 }
 
+STATIC BOOLEAN
+SfbIsImageFile (IN CONST CHAR16 *Name)
+{
+  UINTN Length = StrLen (Name);
+  CONST CHAR16 *Ext;
+  if (Length < 5) return FALSE;
+  Ext = Name + Length - 4;
+  return (BOOLEAN)(Ext[0] == L'.' &&
+    (((Ext[1] == L'p' || Ext[1] == L'P') &&
+      (Ext[2] == L'n' || Ext[2] == L'N') &&
+      (Ext[3] == L'g' || Ext[3] == L'G')) ||
+     ((Ext[1] == L'g' || Ext[1] == L'G') &&
+      (Ext[2] == L'i' || Ext[2] == L'I') &&
+      (Ext[3] == L'f' || Ext[3] == L'F'))));
+}
+
+STATIC BOOLEAN
+SfbUnicodeToConfigAscii (IN CONST CHAR16 *Source, OUT CHAR8 *Dest,
+                         IN UINTN DestBytes)
+{
+  UINTN Index;
+  if (Source == NULL || Dest == NULL || DestBytes == 0) return FALSE;
+  for (Index = 0; Source[Index] != L'\0'; Index++) {
+    if (Index + 1 >= DestBytes || Source[Index] < 0x20 ||
+        Source[Index] > 0x7e || Source[Index] == L'|') return FALSE;
+    Dest[Index] = (CHAR8)Source[Index];
+  }
+  Dest[Index] = '\0';
+  return TRUE;
+}
+
 /* ---- directory listing -------------------------------------------------- */
 
 /* Parent row first, then directories, then files, each alphabetically. */
@@ -559,6 +590,150 @@ SfbBrowseVolume (IN EFI_HANDLE   Volume,
 typedef struct {
   CHAR16  Label[SFB_DESC_CHARS];
 } SFB_VOLUME_ROW;
+
+STATIC BOOLEAN
+SfbBrowseForImage (IN EFI_HANDLE Volume, IN CONST CHAR16 *VolumeLabel,
+                   IN CONST CHAR16 *BrowseRoot,
+                   OUT CHAR8 *OutPath, IN UINTN OutPathBytes)
+{
+  CHAR16 Path[SFB_PATH_CHARS];
+  SFB_DIR_ENTRY *List;
+  UINTN Count = 0;
+  UINTN Cursor = 0;
+  BOOLEAN Reload = TRUE;
+  BOOLEAN Truncated;
+  BOOLEAN Chosen = FALSE;
+
+  List = AllocateZeroPool (SFB_MAX_DIR_ENTRIES * sizeof (*List));
+  if (List == NULL) return FALSE;
+  StrCpyS (Path, SFB_PATH_CHARS, BrowseRoot);
+  while (TRUE) {
+    UINTN Index;
+    SFB_KEY Key;
+    if (Reload) {
+      EFI_FILE_PROTOCOL *Root = NULL;
+      EFI_FILE_PROTOCOL *Dir = NULL;
+      EFI_STATUS Status = SfbOpenDirectory (Volume, Path, &Root, &Dir);
+      if (!EFI_ERROR (Status)) {
+        Status = SfbReadDirectory (Dir, List, SFB_MAX_DIR_ENTRIES,
+                                   &Count, &Truncated);
+        if (Dir != Root) Dir->Close (Dir);
+        Root->Close (Root);
+      }
+      if (EFI_ERROR (Status)) break;
+      /* Hide unsupported files while retaining the parent and directories. */
+      for (Index = 0; Index < Count;) {
+        if (!List[Index].IsDir && !SfbIsImageFile (List[Index].Name)) {
+          CopyMem (&List[Index], &List[Index + 1],
+                   (Count - Index - 1) * sizeof (*List));
+          Count--;
+        } else Index++;
+      }
+      Cursor = 0;
+      Reload = FALSE;
+    }
+    SfbSetVisibleRows (MIN (Count, (UINTN)SFB_VISIBLE_ROWS));
+    SfbBeginScreen (SfbUiLanguage () == 0 ? L"选择启动素材" : L"Choose launch asset",
+                    Path);
+    {
+      UINTN Start = SfbWindowStart (Cursor, Count, SFB_VISIBLE_ROWS);
+      UINTN Last = MIN (Count, Start + SFB_VISIBLE_ROWS);
+      for (Index = Start; Index < Last; Index++) {
+        SfbDrawRowIcon ((BOOLEAN)(Index == Cursor), CanoeIconFile,
+                        List[Index].IsDir ? L"[D]" : L"IMG",
+                        List[Index].Name);
+      }
+    }
+    SfbEndScreen (L"Open");
+    Key = SfbWaitForKey (0);
+    if (Key == SfbKeyUp || Key == SfbKeyDown) {
+      SfbMoveCursor (&Cursor, Count, Key);
+      continue;
+    }
+    if (Count == 0) continue;
+    if (List[Cursor].IsParent) {
+      if (StrCmp (Path, BrowseRoot) == 0) break;
+      SfbParentPath (Path);
+      Reload = TRUE;
+    } else if (List[Cursor].IsDir) {
+      SfbJoinPath (Path, SFB_PATH_CHARS, List[Cursor].Name);
+      Reload = TRUE;
+    } else {
+      CHAR16 FullPath[SFB_PATH_CHARS];
+      StrCpyS (FullPath, SFB_PATH_CHARS, Path);
+      SfbJoinPath (FullPath, SFB_PATH_CHARS, List[Cursor].Name);
+      if (!SfbUnicodeToConfigAscii (FullPath, OutPath, OutPathBytes)) {
+        SfbReportStatus (L"Asset path must use short ASCII names",
+                         EFI_BAD_BUFFER_SIZE);
+      } else {
+        Chosen = TRUE;
+        break;
+      }
+    }
+  }
+  FreePool (List);
+  return Chosen;
+}
+
+BOOLEAN
+SfbSelectBootAsset (OUT CHAR8 *Label, IN UINTN LabelBytes,
+                    OUT CHAR8 *Path, IN UINTN PathBytes)
+{
+  EFI_HANDLE *Volumes = NULL;
+  UINTN VolumeCount = 0;
+  UINTN Cursor = 0;
+  BOOLEAN Chosen = FALSE;
+  if (EFI_ERROR (SfbLocateVolumes (&Volumes, &VolumeCount)) ||
+      Volumes == NULL || VolumeCount == 0) return FALSE;
+  while (TRUE) {
+    UINTN Index;
+    SFB_KEY Key;
+    SfbSetVisibleRows (MIN (VolumeCount + 1, (UINTN)SFB_VISIBLE_ROWS));
+    SfbBeginScreen (SfbUiLanguage () == 0 ? L"选择素材所在卷" : L"Choose asset volume",
+                    SfbUiLanguage () == 0 ? L"仅显示 PNG 和 GIF" : L"PNG and GIF only");
+    for (Index = 0; Index <= VolumeCount; Index++) {
+      CHAR16 Row[SFB_DESC_CHARS];
+      if (Index == VolumeCount) StrCpyS (Row, ARRAY_SIZE (Row), SfbLocalize (L"Back"));
+      else {
+        EFI_FILE_PROTOCOL *Root = NULL;
+        Row[0] = L'\0';
+        if (!EFI_ERROR (SfbOpenVolumeRoot (Volumes[Index], &Root)) && Root != NULL) {
+          SfbGetVolumeLabel (Root, Row, ARRAY_SIZE (Row));
+          Root->Close (Root);
+        }
+        if (Row[0] == L'\0') UnicodeSPrint (Row, sizeof (Row), L"Volume %u", (UINT32)Index);
+      }
+      SfbDrawRowIcon ((BOOLEAN)(Index == Cursor), CanoeIconFile,
+                      Index == VolumeCount ? L"BACK" : L"[V]", Row);
+    }
+    SfbEndScreen (L"Select");
+    Key = SfbWaitForKey (0);
+    if (Key == SfbKeyUp || Key == SfbKeyDown) {
+      SfbMoveCursor (&Cursor, VolumeCount + 1, Key);
+      continue;
+    }
+    if (Cursor == VolumeCount) break;
+    {
+      CHAR16 VolumeLabel[SFB_DESC_CHARS];
+      EFI_FILE_PROTOCOL *Root = NULL;
+      CONST CHAR16 *Prefix = SfbVolumeRootPrefix (Volumes[Cursor]);
+      CONST CHAR16 *BrowseRoot = Prefix[0] == L'\0' ? L"\\" : Prefix;
+      VolumeLabel[0] = L'\0';
+      if (!EFI_ERROR (SfbOpenVolumeRoot (Volumes[Cursor], &Root)) && Root != NULL) {
+        SfbGetVolumeLabel (Root, VolumeLabel, ARRAY_SIZE (VolumeLabel));
+        Root->Close (Root);
+      }
+      if (SfbBrowseForImage (Volumes[Cursor], VolumeLabel, BrowseRoot,
+                             Path, PathBytes)) {
+        if (!SfbUnicodeToConfigAscii (VolumeLabel, Label, LabelBytes)) Label[0] = '\0';
+        Chosen = TRUE;
+        break;
+      }
+    }
+  }
+  FreePool (Volumes);
+  return Chosen;
+}
 
 VOID
 SfbRunFileBrowser (VOID)

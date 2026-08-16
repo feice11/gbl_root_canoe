@@ -1109,6 +1109,7 @@ SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
    * it already bound before it starts.
    */
   SfbPreloadDrivers (Entry->Volume, Entry->Path);
+  SfbUpdateBootingStage (Entry->Desc, ClearScreen, 1);
 
   SfbBypassSecurity();
   Status = gBS->LoadImage (FALSE, gImageHandle, Entry->DevicePath,
@@ -1119,6 +1120,7 @@ SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
             Entry->Path, Status));
     return Status;
   }
+  SfbUpdateBootingStage (Entry->Desc, ClearScreen, 2);
 
   /* AndroidToolsUi consumes this compact option record. Restrict it to the
    * shipped tools: third-party EFI applications may assign their own meaning
@@ -1141,6 +1143,7 @@ SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
                                              sizeof (CHAR16));
   }
 
+  SfbUpdateBootingStage (Entry->Desc, ClearScreen, 3);
   Status = gBS->StartImage (ImageHandle, &ExitDataSize, &ExitData);
   DEBUG ((EFI_D_INFO, "SFB: '%s' returned: %r\n", Entry->Path, Status));
 

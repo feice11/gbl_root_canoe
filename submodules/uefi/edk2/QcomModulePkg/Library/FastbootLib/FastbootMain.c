@@ -105,6 +105,7 @@ STATIC BOOLEAN mFbUsbConnected = FALSE;
  * and command handling independent and only reports display state/cursor. */
 VOID SfbDrawFastbootScreen (IN BOOLEAN Connected, IN UINTN Cursor);
 VOID SfbShowActionScreen (IN CONST CHAR16 *Text);
+VOID SfbUiDebounce (VOID);
 STATIC VOID FastbootDrawModeScreen (VOID);
 static USB_DEVICE_DESCRIPTOR_SET DescSet;
 
@@ -504,8 +505,7 @@ EFI_STATUS FastbootInitialize (VOID)
    * Fastboot") is released and drained first, with a brief pause, so it cannot
    * fire a spurious confirm on the highlighted action row.
    */
-  gBS->Stall (1000000);
-  gST->ConIn->Reset (gST->ConIn, FALSE);
+  SfbUiDebounce ();
   mFbActionCursor = 0;
   mFbUsbConnected = FALSE;
   FastbootDrawModeScreen ();

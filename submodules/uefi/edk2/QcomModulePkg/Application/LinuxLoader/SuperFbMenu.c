@@ -10,6 +10,7 @@
 
 #include "SuperFbMenu.h"
 #include "SuperFbFont.h"
+#include "SuperFbImage.h"
 #include "CanoeUiStyle.h"
 
 #include <Library/BaseLib.h>
@@ -23,6 +24,7 @@
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <Protocol/EFIChargerEx.h>
 #include <Protocol/GraphicsOutput.h>
+#include <Protocol/CanoeUi.h>
 #include <Protocol/SimpleTextIn.h>
 
 /* Keeps the translation unit legal when the feature is compiled out. */
@@ -49,6 +51,7 @@ CONST CHAR8 *gSfbMenuModuleTag = "SuperFbMenu";
 STATIC UINTN  mSfbColumns = 79;
 STATIC BOOLEAN                       mSfbGraphical = FALSE;
 STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL  *mSfbGop = NULL;
+STATIC EFI_HANDLE                    mSfbUiProtocolHandle = NULL;
 STATIC UINTN                         mSfbGfxY = 0;
 STATIC UINTN                         mSfbSafeTop = 0;
 STATIC UINTN                         mSfbRowHeight = 104;
@@ -78,6 +81,12 @@ STATIC UINTN    mSfbTheme = 0;
 STATIC UINTN    mSfbLockMode = SFB_LOCK_OFF;
 STATIC UINTN    mSfbLanguage = 0; /* 0 = Chinese, 1 = English */
 STATIC BOOLEAN  mSfbDescriptions = TRUE;
+/* 0 = hidden, 1 = minimal card, 2 = custom PNG/GIF. */
+STATIC UINTN    mSfbBootVisual = 1;
+/* 0 = top, 1 = center, 2 = bottom. */
+STATIC UINTN    mSfbBootPosition = 1;
+STATIC CHAR8    mSfbBootAssetLabel[64] = "";
+STATIC CHAR8    mSfbBootAssetPath[384] = "";
 STATIC CHAR8    mSfbPin[5] = "1234";
 STATIC BOOLEAN  mSfbSettingsLoaded = FALSE;
 
@@ -110,7 +119,43 @@ SfbLoadSettings (VOID)
 
   if (!EFI_ERROR (SfbStoreRead (SFB_STORE_SETTINGS, Record,
                                 sizeof (Record))) &&
-      AsciiStrnCmp (Record, "SFC3|", 5) == 0 &&
+      AsciiStrnCmp (Record, "SFC4|", 5) == 0 &&
+      Record[5] >= '0' && Record[5] < '0' + SFB_THEME_COUNT &&
+      Record[6] == '|' && Record[7] >= '0' && Record[7] <= '2' &&
+      Record[8] == '|' && (Record[9] == '0' || Record[9] == '1') &&
+      Record[10] == '|' && (Record[11] == '0' || Record[11] == '1') &&
+      Record[12] == '|' && Record[13] >= '0' && Record[13] <= '2' &&
+      Record[14] == '|' && Record[15] >= '0' && Record[15] <= '2' &&
+      Record[16] == '|') {
+    CONST CHAR8 *Cursor;
+    UINTN Out;
+    mSfbTheme = Record[5] - '0';
+    mSfbLockMode = Record[7] - '0';
+    mSfbLanguage = Record[9] - '0';
+    mSfbDescriptions = (BOOLEAN)(Record[11] == '1');
+    mSfbBootVisual = Record[13] - '0';
+    mSfbBootPosition = Record[15] - '0';
+    Cursor = Record + 17;
+    for (Index = 0; Index < 4; Index++) {
+      if (Cursor[Index] < '0' || Cursor[Index] > '9') {
+        mSfbLockMode = SFB_LOCK_OFF;
+        break;
+      }
+      mSfbPin[Index] = Cursor[Index];
+    }
+    mSfbPin[4] = '\0';
+    Cursor += 4;
+    if (*Cursor == '|') Cursor++;
+    Out = 0;
+    while (*Cursor != '\0' && *Cursor != '|' &&
+           Out + 1 < sizeof (mSfbBootAssetLabel)) {
+      mSfbBootAssetLabel[Out++] = *Cursor++;
+    }
+    mSfbBootAssetLabel[Out] = '\0';
+    if (*Cursor == '|') Cursor++;
+    AsciiStrnCpyS (mSfbBootAssetPath, sizeof (mSfbBootAssetPath), Cursor,
+                   sizeof (mSfbBootAssetPath) - 1);
+  } else if (AsciiStrnCmp (Record, "SFC3|", 5) == 0 &&
       Record[5] >= '0' && Record[5] < '0' + SFB_THEME_COUNT &&
       Record[6] == '|' &&
       Record[7] >= '0' && Record[7] <= '2' &&
@@ -171,11 +216,13 @@ STATIC
 EFI_STATUS
 SfbSaveSettings (VOID)
 {
-  CHAR8  Record[32];
+  CHAR8  Record[SFB_STORE_SLOT_BYTES];
 
-  AsciiSPrint (Record, sizeof (Record), "SFC3|%u|%u|%u|%u|%a",
+  AsciiSPrint (Record, sizeof (Record), "SFC4|%u|%u|%u|%u|%u|%u|%a|%a|%a",
                (UINT32)mSfbTheme, (UINT32)mSfbLockMode,
-               (UINT32)mSfbLanguage, mSfbDescriptions ? 1U : 0U, mSfbPin);
+               (UINT32)mSfbLanguage, mSfbDescriptions ? 1U : 0U,
+               (UINT32)mSfbBootVisual, (UINT32)mSfbBootPosition,
+               mSfbPin, mSfbBootAssetLabel, mSfbBootAssetPath);
   return SfbStoreWrite (SFB_STORE_SETTINGS, Record);
 }
 
@@ -283,23 +330,32 @@ SfbGfxFill (IN UINTN X, IN UINTN Y, IN UINTN Width, IN UINTN Height,
 }
 
 STATIC
+CONST SFB_FONT_GLYPH *
+SfbFindGlyph (IN CHAR16 Codepoint)
+{
+  UINTN Low = 0;
+  UINTN High = ARRAY_SIZE (mSfbFontGlyphs);
+  while (Low < High) {
+    UINTN Mid = Low + (High - Low) / 2;
+    if (mSfbFontGlyphs[Mid].Codepoint < Codepoint) Low = Mid + 1;
+    else High = Mid;
+  }
+  if (Low < ARRAY_SIZE (mSfbFontGlyphs) &&
+      mSfbFontGlyphs[Low].Codepoint == Codepoint) return &mSfbFontGlyphs[Low];
+  return NULL;
+}
+
+STATIC
 UINTN
 SfbGfxMeasureText (IN UINT16 Size, IN CONST CHAR16 *Text)
 {
   CONST SFB_FONT_GLYPH  *Glyph;
-  UINTN                 GlyphIndex;
   UINTN                 Index;
   UINTN                 Width = 0;
 
   if (Text == NULL || Size == 0) return 0;
   for (Index = 0; Text[Index] != L'\0'; Index++) {
-    Glyph = NULL;
-    for (GlyphIndex = 0; GlyphIndex < ARRAY_SIZE (mSfbFontGlyphs); GlyphIndex++) {
-      if (mSfbFontGlyphs[GlyphIndex].Codepoint == Text[Index]) {
-        Glyph = &mSfbFontGlyphs[GlyphIndex];
-        break;
-      }
-    }
+    Glyph = SfbFindGlyph (Text[Index]);
     if (Glyph != NULL) {
       Width += ((UINTN)Glyph->Advance * Size + SFB_FONT_HEIGHT - 1) /
                SFB_FONT_HEIGHT;
@@ -492,7 +548,6 @@ SfbGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size,
   UINTN                          A11;
   UINTN                          Advance;
   UINTN                          Alpha;
-  UINTN                          GlyphIndex;
   EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *Pixel;
 
   if (!mSfbGraphical || Text == NULL || Size == 0) {
@@ -501,21 +556,8 @@ SfbGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size,
 
   /* Measure with the same scaled advance used by the raster loop. */
   for (Index = 0; Text[Index] != L'\0'; Index++) {
-    Glyph = NULL;
-    for (GlyphIndex = 0; GlyphIndex < ARRAY_SIZE (mSfbFontGlyphs); GlyphIndex++) {
-      if (mSfbFontGlyphs[GlyphIndex].Codepoint == Text[Index]) {
-        Glyph = &mSfbFontGlyphs[GlyphIndex];
-        break;
-      }
-    }
-    if (Glyph == NULL) {
-      for (GlyphIndex = 0; GlyphIndex < ARRAY_SIZE (mSfbFontGlyphs); GlyphIndex++) {
-        if (mSfbFontGlyphs[GlyphIndex].Codepoint == L'?') {
-          Glyph = &mSfbFontGlyphs[GlyphIndex];
-          break;
-        }
-      }
-    }
+    Glyph = SfbFindGlyph (Text[Index]);
+    if (Glyph == NULL) Glyph = SfbFindGlyph (L'?');
     if (Glyph != NULL) {
       TextWidth += ((UINTN)Glyph->Advance * Size + SFB_FONT_HEIGHT - 1) /
                    SFB_FONT_HEIGHT;
@@ -547,13 +589,7 @@ SfbGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size,
 
   Cursor = 0;
   for (Index = 0; Text[Index] != L'\0' && Cursor < Width; Index++) {
-    Glyph = NULL;
-    for (GlyphIndex = 0; GlyphIndex < ARRAY_SIZE (mSfbFontGlyphs); GlyphIndex++) {
-      if (mSfbFontGlyphs[GlyphIndex].Codepoint == Text[Index]) {
-        Glyph = &mSfbFontGlyphs[GlyphIndex];
-        break;
-      }
-    }
+    Glyph = SfbFindGlyph (Text[Index]);
     if (Glyph == NULL) {
       continue;
     }
@@ -601,6 +637,29 @@ SfbGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size,
   FreePool (Buffer);
   return Status;
 }
+
+STATIC UINTN EFIAPI
+SfbProtocolMeasureText (IN CANOE_UI_PROTOCOL *This, IN UINT16 Size,
+                        IN CONST CHAR16 *Text)
+{
+  (VOID)This;
+  return SfbGfxMeasureText (Size, Text);
+}
+
+STATIC EFI_STATUS EFIAPI
+SfbProtocolDrawText (IN CANOE_UI_PROTOCOL *This, IN UINTN X, IN UINTN Y,
+                     IN UINT16 Size, IN CONST CHAR16 *Text,
+                     IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color)
+{
+  (VOID)This;
+  return SfbGfxText (X, Y, Size, Text, Color);
+}
+
+STATIC CANOE_UI_PROTOCOL mSfbUiProtocol = {
+  CANOE_UI_PROTOCOL_REVISION,
+  SfbProtocolMeasureText,
+  SfbProtocolDrawText
+};
 
 /* ChargerEx exposes voltage rather than fuel-gauge SOC on this open-source
  * interface. Use a conservative single-cell Li-ion curve for the status-bar
@@ -856,6 +915,12 @@ SfbWaitForSelectRelease (VOID)
   SfbWaitForInputQuiet (200, 220);
 }
 
+VOID
+SfbUiDebounce (VOID)
+{
+  SfbWaitForSelectRelease ();
+}
+
 STATIC
 VOID
 SfbUiInitGraphics (VOID)
@@ -872,6 +937,12 @@ SfbUiInitGraphics (VOID)
                             mSfbGop->Mode->Info != NULL &&
                             mSfbGop->Mode->Info->HorizontalResolution <= MAX_UINT16 &&
                             mSfbGop->Mode->Info->VerticalResolution <= MAX_UINT16);
+  if (mSfbGraphical && mSfbUiProtocolHandle == NULL) {
+    (VOID)gBS->InstallProtocolInterface (&mSfbUiProtocolHandle,
+                                         &gCanoeUiProtocolGuid,
+                                         EFI_NATIVE_INTERFACE,
+                                         &mSfbUiProtocol);
+  }
 }
 
 STATIC
@@ -1387,26 +1458,61 @@ SfbDrawFastbootScreen (IN BOOLEAN Connected, IN UINTN Cursor)
  * screen through the load.
  */
 VOID
-SfbShowBootingScreen (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen)
+SfbUpdateBootingStage (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen,
+                       IN UINTN Stage)
 {
   CHAR16 Text[SFB_UI_LINE_CHARS];
+  STATIC BOOLEAN CustomAssetActive = FALSE;
 
   /*
    * An unattended default boot must not blank whatever is already on screen
    * (typically the boot splash): only clear when the launch came from the menu,
    * where the menu itself is what needs clearing away.
    */
-  if (ClearScreen) {
+  SfbLoadSettings ();
+  if (mSfbBootVisual == 0) return;
+  if (ClearScreen && Stage == 0) {
     SfbBeginScreen (L"Launching", L"Starting the selected EFI application");
   }
   SfbUiInitGraphics ();
   if (mSfbGraphical) {
+    UINTN Width = mSfbGop->Mode->Info->HorizontalResolution;
     UINTN Height = mSfbGop->Mode->Info->VerticalResolution;
+    UINTN CardWidth = MIN (Width - 2 * CANOE_UI_SIDE_MARGIN, (UINTN)1040);
+    UINTN CardHeight = 230;
+    UINTN CardX = (Width - CardWidth) / 2;
+    UINTN CardY;
+    UINTN Progress = MIN (Stage, (UINTN)3);
+    if (Stage == 0) {
+      CustomAssetActive = FALSE;
+      if (mSfbBootVisual == 2 &&
+          !EFI_ERROR (SfbDrawLaunchAsset (mSfbBootAssetLabel,
+                                          mSfbBootAssetPath,
+                                          mSfbBootPosition, mSfbGop,
+                                          &mSfbColorBackground))) {
+        CustomAssetActive = TRUE;
+        return;
+      }
+    } else if (CustomAssetActive) {
+      return;
+    }
+    if (mSfbBootPosition == 0) CardY = mSfbSafeTop + CANOE_UI_HEADER_HEIGHT + 70;
+    else if (mSfbBootPosition == 2) CardY = Height - CANOE_UI_FOOTER_HEIGHT - CardHeight - 80;
+    else CardY = (Height - CardHeight) / 2;
+    SfbGfxFill (CardX + 12, CardY + 14, CardWidth, CardHeight,
+                &mSfbColorBackground);
+    SfbGfxFill (CardX, CardY, CardWidth, CardHeight, &mSfbColorSurface);
+    SfbGfxFill (CardX, CardY, 10, CardHeight, &mSfbColorPrimary);
     UnicodeSPrint (Text, sizeof (Text),
                    mSfbLanguage == 0 ? L"正在启动 %s" : L"Booting %s",
                    (Name != NULL && Name[0] != L'\0') ? Name : L"application");
-    SfbGfxGradientText (ClearScreen ? Height / 2 : Height * 3 / 4,
-                        68, 34, Text);
+    SfbGfxCenteredText (CardY + 52, 54, 32, Text, &mSfbColorText);
+    SfbGfxFill (CardX + 64, CardY + CardHeight - 54,
+                CardWidth - 128, 8, &mSfbColorDisabled);
+    if (Progress != 0) {
+      SfbGfxFill (CardX + 64, CardY + CardHeight - 54,
+                  (CardWidth - 128) * Progress / 3, 8, &mSfbColorPrimary);
+    }
     return;
   }
   gST->ConOut->EnableCursor (gST->ConOut, FALSE);
@@ -1414,6 +1520,12 @@ SfbShowBootingScreen (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen)
   Print (L"  Booting %s ...\r\n",
          (Name != NULL && Name[0] != L'\0') ? Name : L"application");
   gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
+}
+
+VOID
+SfbShowBootingScreen (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen)
+{
+  SfbUpdateBootingStage (Name, ClearScreen, 0);
 }
 
 /*
@@ -1594,6 +1706,10 @@ STATIC
 CONST CHAR16 *
 SfbSettingsDescription (IN UINTN Cursor);
 
+BOOLEAN
+SfbSelectBootAsset (OUT CHAR8 *Label, IN UINTN LabelBytes,
+                    OUT CHAR8 *Path, IN UINTN PathBytes);
+
 STATIC
 VOID
 SfbRunSettings (VOID)
@@ -1606,7 +1722,12 @@ SfbRunSettings (VOID)
     CHAR16  Language[48];
     CHAR16  Lock[48];
     CHAR16  Descriptions[48];
-    UINTN   Count = (mSfbLockMode == SFB_LOCK_PIN) ? 6 : 5;
+    CHAR16  BootVisual[64];
+    CHAR16  BootPosition[48];
+    UINTN   AssetRow = (mSfbBootVisual == 2) ? 6 : MAX_UINTN;
+    UINTN   PinRow = 6 + ((mSfbBootVisual == 2) ? 1 : 0);
+    UINTN   BackRow = PinRow + ((mSfbLockMode == SFB_LOCK_PIN) ? 1 : 0);
+    UINTN   Count = BackRow + 1;
 
     UnicodeSPrint (Theme, sizeof (Theme),
                    mSfbLanguage == 0 ? L"配色主题    %s" : L"Color theme    %s",
@@ -1621,6 +1742,16 @@ SfbRunSettings (VOID)
                    mSfbDescriptions
                      ? (mSfbLanguage == 0 ? L"开启" : L"On")
                      : (mSfbLanguage == 0 ? L"关闭" : L"Off"));
+    UnicodeSPrint (BootVisual, sizeof (BootVisual),
+                   mSfbLanguage == 0 ? L"启动画面    %s" : L"Launch visual    %s",
+                   mSfbBootVisual == 0 ? (mSfbLanguage == 0 ? L"关闭" : L"Off") :
+                   mSfbBootVisual == 1 ? (mSfbLanguage == 0 ? L"极简" : L"Minimal") :
+                                         (mSfbLanguage == 0 ? L"自定义" : L"Custom"));
+    UnicodeSPrint (BootPosition, sizeof (BootPosition),
+                   mSfbLanguage == 0 ? L"画面位置    %s" : L"Visual position    %s",
+                   mSfbBootPosition == 0 ? (mSfbLanguage == 0 ? L"顶部" : L"Top") :
+                   mSfbBootPosition == 1 ? (mSfbLanguage == 0 ? L"居中" : L"Center") :
+                                           (mSfbLanguage == 0 ? L"底部" : L"Bottom"));
     SfbSetVisibleRows (Count);
     SfbBeginScreen (L"Settings",
                     mSfbLanguage == 0 ? L"选择一项进行更改"
@@ -1629,13 +1760,19 @@ SfbRunSettings (VOID)
     SfbDrawRow ((BOOLEAN)(Cursor == 1), L"LANG", Language);
     SfbDrawRow ((BOOLEAN)(Cursor == 2), L"LOCK", Lock);
     SfbDrawRow ((BOOLEAN)(Cursor == 3), L"INFO", Descriptions);
-    if (mSfbLockMode == SFB_LOCK_PIN) {
-      SfbDrawRow ((BOOLEAN)(Cursor == 4), L"PIN",
-                  mSfbLanguage == 0 ? L"更改 PIN 密码" : L"Change PIN");
-      SfbDrawRow ((BOOLEAN)(Cursor == 5), L"BACK", SfbLocalize (L"Back"));
-    } else {
-      SfbDrawRow ((BOOLEAN)(Cursor == 4), L"BACK", SfbLocalize (L"Back"));
+    SfbDrawRow ((BOOLEAN)(Cursor == 4), L"COLOR", BootVisual);
+    SfbDrawRow ((BOOLEAN)(Cursor == 5), L"INFO", BootPosition);
+    if (AssetRow != MAX_UINTN) {
+      SfbDrawRow ((BOOLEAN)(Cursor == AssetRow), L"FILES",
+                  mSfbBootAssetPath[0] == '\0'
+                    ? (mSfbLanguage == 0 ? L"选择 PNG/GIF" : L"Choose PNG/GIF")
+                    : (mSfbLanguage == 0 ? L"更换启动素材" : L"Change launch asset"));
     }
+    if (mSfbLockMode == SFB_LOCK_PIN) {
+      SfbDrawRow ((BOOLEAN)(Cursor == PinRow), L"PIN",
+                  mSfbLanguage == 0 ? L"更改 PIN 密码" : L"Change PIN");
+    }
+    SfbDrawRow ((BOOLEAN)(Cursor == BackRow), L"BACK", SfbLocalize (L"Back"));
     SfbEndScreen (L"Select");
 
     Key = SfbWaitForKey (mSfbDescriptions ? 2000 : 0);
@@ -1645,7 +1782,10 @@ SfbRunSettings (VOID)
       else if (Cursor == 1) TipTitle = Language;
       else if (Cursor == 2) TipTitle = Lock;
       else if (Cursor == 3) TipTitle = Descriptions;
-      else if (mSfbLockMode == SFB_LOCK_PIN && Cursor == 4) {
+      else if (Cursor == 4) TipTitle = BootVisual;
+      else if (Cursor == 5) TipTitle = BootPosition;
+      else if (Cursor == AssetRow) TipTitle = mSfbLanguage == 0 ? L"选择启动素材" : L"Choose launch asset";
+      else if (mSfbLockMode == SFB_LOCK_PIN && Cursor == PinRow) {
         TipTitle = mSfbLanguage == 0 ? L"更改 PIN 密码" : L"Change PIN";
       } else TipTitle = SfbLocalize (L"Back");
       SfbDrawDescriptionCard (TipTitle, SfbSettingsDescription (Cursor));
@@ -1680,7 +1820,23 @@ SfbRunSettings (VOID)
       mSfbDescriptions = (BOOLEAN)!mSfbDescriptions;
       SfbSaveSettings ();
       Cursor = 3;
-    } else if (mSfbLockMode == SFB_LOCK_PIN && Cursor == 4) {
+    } else if (Cursor == 4) {
+      mSfbBootVisual = (mSfbBootVisual + 1) % 3;
+      SfbSaveSettings ();
+      Cursor = 4;
+    } else if (Cursor == 5) {
+      mSfbBootPosition = (mSfbBootPosition + 1) % 3;
+      SfbSaveSettings ();
+      Cursor = 5;
+    } else if (Cursor == AssetRow) {
+      if (SfbSelectBootAsset (mSfbBootAssetLabel,
+                              sizeof (mSfbBootAssetLabel),
+                              mSfbBootAssetPath,
+                              sizeof (mSfbBootAssetPath))) {
+        SfbSaveSettings ();
+      }
+      Cursor = AssetRow;
+    } else if (mSfbLockMode == SFB_LOCK_PIN && Cursor == PinRow) {
       CHAR8  NewPin[5];
 
       ZeroMem (NewPin, sizeof (NewPin));
@@ -1764,9 +1920,13 @@ SfbSettingsDescription (IN UINTN Cursor)
     case 1: return L"在中文和英文界面之间切换。";
     case 2: return L"选择关闭、简易按键锁或四位 PIN 密码锁。";
     case 3: return L"控制菜单项停留两秒后是否显示功能说明。";
-    case 4: return mSfbLockMode == SFB_LOCK_PIN
-                     ? L"重新设置用于进入启动菜单的四位 PIN。"
-                     : L"返回启动菜单。";
+    case 4: return L"选择关闭启动提示、极简启动卡或自定义 PNG/GIF。";
+    case 5: return L"将启动画面放在安全区的顶部、中央或底部。";
+    case 6: return mSfbBootVisual == 2
+                     ? L"从已挂载卷选择 PNG 或 GIF 启动素材。"
+                     : (mSfbLockMode == SFB_LOCK_PIN
+                          ? L"重新设置用于进入启动菜单的四位 PIN。"
+                          : L"返回启动菜单。");
     default: return L"返回启动菜单。";
     }
   }
@@ -1775,9 +1935,13 @@ SfbSettingsDescription (IN UINTN Cursor)
   case 1: return L"Switch the interface language between Chinese and English.";
   case 2: return L"Choose no lock, the simple key lock, or a four-digit PIN.";
   case 3: return L"Show or hide item descriptions after a two-second pause.";
-  case 4: return mSfbLockMode == SFB_LOCK_PIN
-                   ? L"Change the four-digit PIN used to enter the boot menu."
-                   : L"Return to the boot menu.";
+  case 4: return L"Choose no launch visual, the minimal card, or a custom PNG/GIF.";
+  case 5: return L"Place the launch visual at the top, center, or bottom safe area.";
+  case 6: return mSfbBootVisual == 2
+                   ? L"Choose a PNG or GIF launch asset from a mounted volume."
+                   : (mSfbLockMode == SFB_LOCK_PIN
+                        ? L"Change the four-digit PIN used to enter the boot menu."
+                        : L"Return to the boot menu.");
   default: return L"Return to the boot menu.";
   }
 }
@@ -2063,8 +2227,14 @@ SfbRunBootMenu (VOID)
       if (EFI_ERROR (Status)) {
         SfbReportStatus (L"Boot failed", Status);
       }
-      /* Media or variables may have changed while the image ran. */
-      Rebuild = TRUE;
+      /* Shipped tools do not alter volumes or boot-entry files. Keep the
+       * already resolved menu so returning from a tool is instant. Unknown
+       * third-party applications still receive the conservative rescan. */
+      Rebuild = (BOOLEAN)(
+        StrStr (Menu.Entry[Chosen].Path, L"\\tools\\RebootTools.efi") == NULL &&
+        StrStr (Menu.Entry[Chosen].Path, L"\\tools\\ArbTools.efi") == NULL &&
+        StrStr (Menu.Entry[Chosen].Path, L"\\tools\\BLTools.efi") == NULL &&
+        StrStr (Menu.Entry[Chosen].Path, L"\\tools\\MiniGames.efi") == NULL);
       break;
     }
   }

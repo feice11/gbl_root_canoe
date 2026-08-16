@@ -362,9 +362,17 @@ SfbShowEnteringMenu (VOID);
 VOID
 SfbShowBootingScreen (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen);
 
+VOID
+SfbUpdateBootingStage (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen,
+                       IN UINTN Stage);
+
 /* Wait for a key. TimeoutMs of 0 waits indefinitely. */
 SFB_KEY
 SfbWaitForKey (IN UINT32 TimeoutMs);
+
+/* Drain a carried power press and require a short input-quiet window. */
+VOID
+SfbUiDebounce (VOID);
 
 /* ---- shared console helpers (SuperFbMenu.c) ----------------------------- */
 

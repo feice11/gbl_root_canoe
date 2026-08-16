@@ -19,10 +19,10 @@
 #include <Protocol/EFIChargerEx.h>
 #include <Protocol/GraphicsOutput.h>
 #include <Protocol/LoadedImage.h>
+#include <Protocol/CanoeUi.h>
 #include <Protocol/SimpleTextIn.h>
 #include <Protocol/SimpleTextOut.h>
 #include "AndroidToolsUi.h"
-#include "../../../QcomModulePkg/Application/LinuxLoader/SuperFbFont.h"
 
 #ifndef ARRAY_SIZE
 #define ARRAY_SIZE(a)  (sizeof (a) / sizeof ((a)[0]))
@@ -31,7 +31,6 @@
 #define AT_ATTR_NORMAL    EFI_TEXT_ATTR (EFI_LIGHTGRAY, EFI_BLACK)
 #define AT_ATTR_SELECTED  EFI_TEXT_ATTR (EFI_WHITE, EFI_BLUE)
 #define AT_ATTR_TITLE     EFI_TEXT_ATTR (EFI_WHITE, EFI_BLACK)
-#define AT_ENTER_MENU_DELAY_S  2
 #define AT_THEME_COUNT  4
 
 STATIC CONST CANOE_UI_PALETTE  mAtPalettes[AT_THEME_COUNT] =
@@ -41,6 +40,7 @@ STATIC BOOLEAN                       mAtChinese = TRUE;
 STATIC UINTN                         mAtTheme = 0;
 STATIC BOOLEAN                       mAtGraphical = FALSE;
 STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL  *mAtGop = NULL;
+STATIC CANOE_UI_PROTOCOL             *mAtSharedUi = NULL;
 STATIC UINTN                         mAtSafeTop = 192;
 STATIC UINTN                         mAtY = 0;
 STATIC UINTN                         mAtRowHeight = 104;
@@ -73,26 +73,8 @@ STATIC
 UINTN
 AtGfxMeasureText (IN UINT16 Size, IN CONST CHAR16 *Text)
 {
-  CONST SFB_FONT_GLYPH  *Glyph;
-  UINTN                 GlyphIndex;
-  UINTN                 Index;
-  UINTN                 Width = 0;
-
-  if (Text == NULL || Size == 0) return 0;
-  for (Index = 0; Text[Index] != L'\0'; Index++) {
-    Glyph = NULL;
-    for (GlyphIndex = 0; GlyphIndex < ARRAY_SIZE (mSfbFontGlyphs); GlyphIndex++) {
-      if (mSfbFontGlyphs[GlyphIndex].Codepoint == Text[Index]) {
-        Glyph = &mSfbFontGlyphs[GlyphIndex];
-        break;
-      }
-    }
-    if (Glyph != NULL) {
-      Width += ((UINTN)Glyph->Advance * Size + SFB_FONT_HEIGHT - 1) /
-               SFB_FONT_HEIGHT;
-    }
-  }
-  return Width;
+  if (mAtSharedUi == NULL || mAtSharedUi->MeasureText == NULL) return 0;
+  return mAtSharedUi->MeasureText (mAtSharedUi, Size, Text);
 }
 
 STATIC
@@ -176,6 +158,11 @@ EFI_STATUS
 AtGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size, IN CONST CHAR16 *Text,
            IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color)
 {
+  if (mAtSharedUi != NULL && mAtSharedUi->DrawText != NULL) {
+    return mAtSharedUi->DrawText (mAtSharedUi, X, Y, Size, Text, Color);
+  }
+  return EFI_UNSUPPORTED;
+#if 0
   EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *Buffer;
   CONST SFB_FONT_GLYPH           *Glyph;
   EFI_STATUS                     Status;
@@ -298,6 +285,7 @@ AtGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size, IN CONST CHAR16 *Text,
                         Width * sizeof (*Buffer));
   FreePool (Buffer);
   return Status;
+#endif
 }
 
 STATIC
@@ -450,7 +438,11 @@ AtUiInitialize (IN EFI_HANDLE ImageHandle)
   mAtWarning = mAtPalettes[mAtTheme].Warning;
   Status = gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL,
                                 (VOID **)&mAtGop);
+  (VOID)gBS->LocateProtocol (&gCanoeUiProtocolGuid, NULL,
+                             (VOID **)&mAtSharedUi);
   mAtGraphical = (BOOLEAN)(!EFI_ERROR (Status) && mAtGop != NULL &&
+                            mAtSharedUi != NULL &&
+                            mAtSharedUi->Revision >= CANOE_UI_PROTOCOL_REVISION &&
                             mAtGop->Mode != NULL && mAtGop->Mode->Info != NULL);
   if (mAtGraphical) {
     mAtSafeTop = MAX (CANOE_UI_SAFE_TOP_MIN,
@@ -591,9 +583,8 @@ AtUiDebounce (VOID)
 VOID
 AtUiEnterMenu (IN CONST CHAR16 *Title)
 {
-  AtUiBeginScreen (Title, L"Entering");
-  gBS->Stall (AT_ENTER_MENU_DELAY_S * 1000 * 1000);
-  gST->ConIn->Reset (gST->ConIn, FALSE);
+  (VOID)Title;
+  AtUiDebounce ();
 }
 
 VOID
