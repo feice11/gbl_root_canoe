@@ -1079,6 +1079,8 @@ SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
   UINTN       ExitDataSize = 0;
   EFI_LOADED_IMAGE_PROTOCOL  *LoadedImage = NULL;
   CHAR16      UiOptions[32];
+  UINTN       ClockOffset = 0;
+  BOOLEAN     ClockValid;
 
   if (Entry->Kind != SfbEntryEfiFile || Entry->DevicePath == NULL) {
     return EFI_INVALID_PARAMETER;
@@ -1129,8 +1131,10 @@ SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
                                        &gEfiLoadedImageProtocolGuid,
                                        (VOID **)&LoadedImage)) &&
       LoadedImage != NULL) {
-    UnicodeSPrint (UiOptions, sizeof (UiOptions), L"CUI1|%u|%u",
-                   (UINT32)SfbUiLanguage (), (UINT32)SfbUiTheme ());
+    ClockValid = SfbUiClockOffsetSeconds (&ClockOffset);
+    UnicodeSPrint (UiOptions, sizeof (UiOptions), L"CUI2|%u|%u|%u|%u",
+                   (UINT32)SfbUiLanguage (), (UINT32)SfbUiTheme (),
+                   (UINT32)ClockOffset, ClockValid ? 1U : 0U);
     LoadedImage->LoadOptions = UiOptions;
     LoadedImage->LoadOptionsSize = (UINT32)((StrLen (UiOptions) + 1) *
                                              sizeof (CHAR16));

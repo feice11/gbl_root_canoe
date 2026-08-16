@@ -15,6 +15,7 @@
 #include <Uefi.h>
 #include <Protocol/DevicePath.h>
 #include <Protocol/SimpleFileSystem.h>
+#include "CanoeUiStyle.h"
 
 /* The boot loader we look for on every FAT32 volume, and the optional ANSI
  * one-liner describing it. */
@@ -365,7 +366,7 @@ SfbWaitForKey (IN UINT32 TimeoutMs);
 /* ---- shared console helpers (SuperFbMenu.c) ----------------------------- */
 
 /* Rows of list content a screen shows before it starts scrolling. */
-#define SFB_VISIBLE_ROWS  8
+#define SFB_VISIBLE_ROWS  CANOE_UI_VISIBLE_MAX
 
 VOID
 SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle OPTIONAL);
@@ -378,6 +379,17 @@ SfbDrawRow (IN BOOLEAN      Selected,
             IN CONST CHAR16 *Marker,
             IN CONST CHAR16 *Text);
 
+/* Select a 5-7 row adaptive layout for the next graphical screen. */
+VOID
+SfbSetVisibleRows (IN UINTN Rows);
+
+/* Semantic-icon row. FallbackMarker is used only by SimpleTextOut mode. */
+VOID
+SfbDrawRowIcon (IN BOOLEAN       Selected,
+                IN CANOE_UI_ICON Icon,
+                IN CONST CHAR16 *FallbackMarker,
+                IN CONST CHAR16 *Text);
+
 /* Translate fixed UI copy according to the persisted language. Dynamic entry
  * names and paths must not be passed through this helper. */
 CONST CHAR16 *
@@ -389,6 +401,10 @@ SfbUiLanguage (VOID);
 
 UINTN
 SfbUiTheme (VOID);
+
+/* Return the Android-calibrated seconds added to the firmware RTC. */
+BOOLEAN
+SfbUiClockOffsetSeconds (OUT UINTN *OffsetSeconds);
 
 /* First row of the visible window, chosen to keep Cursor inside it. */
 UINTN

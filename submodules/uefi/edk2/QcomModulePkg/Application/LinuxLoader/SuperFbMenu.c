@@ -10,6 +10,7 @@
 
 #include "SuperFbMenu.h"
 #include "SuperFbFont.h"
+#include "CanoeUiStyle.h"
 
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
@@ -50,6 +51,9 @@ STATIC BOOLEAN                       mSfbGraphical = FALSE;
 STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL  *mSfbGop = NULL;
 STATIC UINTN                         mSfbGfxY = 0;
 STATIC UINTN                         mSfbSafeTop = 0;
+STATIC UINTN                         mSfbRowHeight = 104;
+STATIC UINTN                         mSfbRowStep = 120;
+STATIC UINTN                         mSfbVisibleRows = CANOE_UI_VISIBLE_MIN;
 STATIC BOOLEAN                       mSfbClockCalibrationLoaded = FALSE;
 STATIC UINTN                         mSfbClockOffsetSeconds = 0;
 
@@ -58,24 +62,17 @@ STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorSurface    = { 0x2d, 0x25, 0x1d, 0
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorPrimary    = { 0xe8, 0x79, 0x24, 0x00 };
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorText       = { 0xf4, 0xf4, 0xf4, 0x00 };
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorMuted      = { 0xb0, 0xa8, 0x9f, 0x00 };
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorDisabled   = { 0x68, 0x62, 0x5d, 0x00 };
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorSuccess    = { 0x78, 0xd6, 0x55, 0x00 };
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorWarning    = { 0x42, 0xa5, 0xff, 0x00 };
 
 #define SFB_THEME_COUNT  4
 #define SFB_LOCK_OFF     0
 #define SFB_LOCK_SIMPLE  1
 #define SFB_LOCK_PIN     2
 
-typedef struct {
-  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Background;
-  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Surface;
-  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Primary;
-} SFB_PALETTE;
-
-STATIC CONST SFB_PALETTE  mSfbPalettes[SFB_THEME_COUNT] = {
-  { { 0x18, 0x12, 0x0d, 0 }, { 0x2d, 0x25, 0x1d, 0 }, { 0xe8, 0x79, 0x24, 0 } },
-  { { 0x19, 0x10, 0x14, 0 }, { 0x32, 0x21, 0x2a, 0 }, { 0xff, 0x59, 0x9b, 0 } },
-  { { 0x13, 0x16, 0x0d, 0 }, { 0x26, 0x2c, 0x1d, 0 }, { 0x7b, 0xc7, 0x27, 0 } },
-  { { 0x10, 0x12, 0x18, 0 }, { 0x20, 0x26, 0x32, 0 }, { 0x3d, 0x8a, 0xff, 0 } }
-};
+STATIC CONST CANOE_UI_PALETTE  mSfbPalettes[SFB_THEME_COUNT] =
+  CANOE_UI_PALETTE_INITIALIZERS;
 
 STATIC UINTN    mSfbTheme = 0;
 STATIC UINTN    mSfbLockMode = SFB_LOCK_OFF;
@@ -90,6 +87,11 @@ SfbApplyPalette (VOID)
   mSfbColorBackground = mSfbPalettes[mSfbTheme].Background;
   mSfbColorSurface = mSfbPalettes[mSfbTheme].Surface;
   mSfbColorPrimary = mSfbPalettes[mSfbTheme].Primary;
+  mSfbColorText = mSfbPalettes[mSfbTheme].Text;
+  mSfbColorMuted = mSfbPalettes[mSfbTheme].Muted;
+  mSfbColorDisabled = mSfbPalettes[mSfbTheme].Disabled;
+  mSfbColorSuccess = mSfbPalettes[mSfbTheme].Success;
+  mSfbColorWarning = mSfbPalettes[mSfbTheme].Warning;
 }
 
 STATIC
@@ -255,6 +257,113 @@ SfbGfxFill (IN UINTN X, IN UINTN Y, IN UINTN Width, IN UINTN Height,
   }
   mSfbGop->Blt (mSfbGop, Color, EfiBltVideoFill, 0, 0, X, Y,
                 Width, Height, 0);
+}
+
+STATIC
+UINTN
+SfbGfxMeasureText (IN UINT16 Size, IN CONST CHAR16 *Text)
+{
+  CONST SFB_FONT_GLYPH  *Glyph;
+  UINTN                 GlyphIndex;
+  UINTN                 Index;
+  UINTN                 Width = 0;
+
+  if (Text == NULL || Size == 0) return 0;
+  for (Index = 0; Text[Index] != L'\0'; Index++) {
+    Glyph = NULL;
+    for (GlyphIndex = 0; GlyphIndex < ARRAY_SIZE (mSfbFontGlyphs); GlyphIndex++) {
+      if (mSfbFontGlyphs[GlyphIndex].Codepoint == Text[Index]) {
+        Glyph = &mSfbFontGlyphs[GlyphIndex];
+        break;
+      }
+    }
+    if (Glyph != NULL) {
+      Width += ((UINTN)Glyph->Advance * Size + SFB_FONT_HEIGHT - 1) /
+               SFB_FONT_HEIGHT;
+    }
+  }
+  return Width;
+}
+
+STATIC
+UINT16
+SfbGfxFitText (IN UINT16 Preferred, IN UINT16 Minimum,
+               IN UINTN Available, IN CONST CHAR16 *Text)
+{
+  UINT16 Size = Preferred;
+  while (Size > Minimum && SfbGfxMeasureText (Size, Text) > Available) {
+    Size = (UINT16)(Size - 2);
+  }
+  return Size;
+}
+
+STATIC
+VOID
+SfbGfxIcon (IN UINTN X, IN UINTN Y, IN UINTN Size, IN CANOE_UI_ICON Icon,
+            IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color)
+{
+  UINTN U = MAX (2, Size / 9);
+  UINTN C = Size / 2;
+
+  if (Icon == CanoeIconNone) return;
+  /* Every icon is made from filled primitives so it works on bare GOP. */
+  if (Icon == CanoeIconBoot || Icon == CanoeIconRestart ||
+      Icon == CanoeIconBack) {
+    SfbGfxFill (X + U, Y + C - U, Size - 2 * U, 2 * U, Color);
+    SfbGfxFill (Icon == CanoeIconBack ? X + U : X + Size - 3 * U,
+                Y + C - 3 * U, 2 * U, 6 * U, Color);
+  } else if (Icon == CanoeIconFile) {
+    SfbGfxFill (X + 2 * U, Y + U, Size - 4 * U, U, Color);
+    SfbGfxFill (X + 2 * U, Y + U, U, Size - 2 * U, Color);
+    SfbGfxFill (X + 2 * U, Y + Size - 2 * U, Size - 4 * U, U, Color);
+    SfbGfxFill (X + Size - 3 * U, Y + 3 * U, U, Size - 4 * U, Color);
+  } else if (Icon == CanoeIconUsb) {
+    SfbGfxFill (X + C - U / 2, Y + U, U, Size - 3 * U, Color);
+    SfbGfxFill (X + C, Y + 3 * U, 3 * U, U, Color);
+    SfbGfxFill (X + C - 3 * U, Y + 5 * U, 3 * U, U, Color);
+    SfbGfxFill (X + C - U, Y + Size - 2 * U, 3 * U, U, Color);
+  } else if (Icon == CanoeIconLock || Icon == CanoeIconPin) {
+    SfbGfxFill (X + 2 * U, Y + 4 * U, Size - 4 * U, Size - 5 * U, Color);
+    SfbGfxFill (X + 3 * U, Y + U, U, 4 * U, Color);
+    SfbGfxFill (X + Size - 4 * U, Y + U, U, 4 * U, Color);
+    SfbGfxFill (X + 3 * U, Y + U, Size - 6 * U, U, Color);
+  } else if (Icon == CanoeIconGame) {
+    SfbGfxFill (X + U, Y + 3 * U, Size - 2 * U, 4 * U, Color);
+    SfbGfxFill (X + 3 * U, Y + 2 * U, U, 6 * U, Color);
+    SfbGfxFill (X + 2 * U, Y + 4 * U, 3 * U, U, Color);
+    SfbGfxFill (X + Size - 4 * U, Y + 4 * U, U, U, &mSfbColorBackground);
+  } else if (Icon == CanoeIconWarning) {
+    SfbGfxFill (X + C - U / 2, Y + U, U, 5 * U, Color);
+    SfbGfxFill (X + C - U / 2, Y + 7 * U, U, U, Color);
+  } else if (Icon == CanoeIconPalette) {
+    SfbGfxFill (X + U, Y + 2 * U, Size - 2 * U, 5 * U, Color);
+    SfbGfxFill (X + 3 * U, Y + 3 * U, U, U, &mSfbColorBackground);
+    SfbGfxFill (X + 5 * U, Y + 3 * U, U, U, &mSfbColorBackground);
+  } else {
+    /* Settings/tool/language/info use a stable cross-in-box glyph. */
+    SfbGfxFill (X + U, Y + U, Size - 2 * U, U, Color);
+    SfbGfxFill (X + U, Y + Size - 2 * U, Size - 2 * U, U, Color);
+    SfbGfxFill (X + U, Y + U, U, Size - 2 * U, Color);
+    SfbGfxFill (X + Size - 2 * U, Y + U, U, Size - 2 * U, Color);
+    SfbGfxFill (X + C - U / 2, Y + 3 * U, U, 3 * U, Color);
+  }
+}
+
+STATIC
+CANOE_UI_ICON
+SfbIconFromMarker (IN CONST CHAR16 *Marker)
+{
+  if (Marker == NULL || Marker[0] == L'\0' || StrCmp (Marker, L" ") == 0) return CanoeIconNone;
+  if (StrCmp (Marker, L"USB") == 0) return CanoeIconUsb;
+  if (StrCmp (Marker, L"FILES") == 0 || StrCmp (Marker, L"[V]") == 0) return CanoeIconFile;
+  if (StrCmp (Marker, L"POWER") == 0) return CanoeIconPower;
+  if (StrCmp (Marker, L"COLOR") == 0) return CanoeIconPalette;
+  if (StrCmp (Marker, L"LANG") == 0) return CanoeIconLanguage;
+  if (StrCmp (Marker, L"LOCK") == 0) return CanoeIconLock;
+  if (StrCmp (Marker, L"PIN") == 0) return CanoeIconPin;
+  if (StrCmp (Marker, L"BACK") == 0) return CanoeIconBack;
+  if (StrCmp (Marker, L"MENU") == 0) return CanoeIconTool;
+  return CanoeIconBoot;
 }
 
 STATIC
@@ -503,6 +612,16 @@ SfbLoadClockCalibration (VOID)
   return Found;
 }
 
+BOOLEAN
+SfbUiClockOffsetSeconds (OUT UINTN *OffsetSeconds)
+{
+  if (OffsetSeconds == NULL || !SfbLoadClockCalibration ()) {
+    return FALSE;
+  }
+  *OffsetSeconds = mSfbClockOffsetSeconds;
+  return TRUE;
+}
+
 STATIC
 VOID
 SfbDrawStatusBar (VOID)
@@ -670,11 +789,27 @@ SfbUiFullRow (IN UINTN Attribute, IN CONST CHAR16 *Text)
 
   if (mSfbGraphical) {
     EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *Color;
+    UINTN Width;
+    UINT16 Size;
 
-    Color = (Attribute == SFB_ATTR_ERROR) ? &mSfbColorPrimary :
+    if (Text[0] == L'\0') {
+      mSfbGfxY += 28;
+      return;
+    }
+
+    Color = (Attribute == SFB_ATTR_ERROR) ? &mSfbColorWarning :
+            (Attribute == SFB_ATTR_SUCCESS) ? &mSfbColorSuccess :
+            (Attribute == SFB_ATTR_ACCENT) ? &mSfbColorPrimary :
             (Attribute == SFB_ATTR_MUTED) ? &mSfbColorMuted : &mSfbColorText;
-    SfbGfxText (72, mSfbGfxY, 30, Text, Color);
-    mSfbGfxY += 58;
+    Width = mSfbGop->Mode->Info->HorizontalResolution;
+    SfbGfxFill (CANOE_UI_SIDE_MARGIN, mSfbGfxY,
+                Width - 2 * CANOE_UI_SIDE_MARGIN, 76, &mSfbColorSurface);
+    SfbGfxFill (CANOE_UI_SIDE_MARGIN, mSfbGfxY, 4, 76, Color);
+    Size = SfbGfxFitText (CANOE_UI_SUBTITLE_FONT, 22,
+                          Width - 2 * CANOE_UI_SIDE_MARGIN - 48, Text);
+    SfbGfxText (CANOE_UI_SIDE_MARGIN + 28,
+                mSfbGfxY + (76 - Size) / 2, Size, Text, Color);
+    mSfbGfxY += 90;
     return;
   }
 
@@ -787,7 +922,11 @@ VOID
 SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
 {
   CHAR16  Header[SFB_UI_LINE_CHARS];
+  UINT16  TitleSize;
   UINTN   Width;
+  UINTN   Height;
+  UINTN   ContentTop;
+  UINTN   Available;
 
   SfbLoadSettings ();
   Title = SfbLocalize (Title);
@@ -797,22 +936,35 @@ SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
   SfbUiInitGraphics ();
   if (mSfbGraphical) {
     Width = mSfbGop->Mode->Info->HorizontalResolution;
-    mSfbSafeTop = MAX (192,
-                       mSfbGop->Mode->Info->VerticalResolution / 16);
-    SfbGfxFill (0, 0, Width,
-                mSfbGop->Mode->Info->VerticalResolution,
-                &mSfbColorBackground);
+    Height = mSfbGop->Mode->Info->VerticalResolution;
+    mSfbSafeTop = MAX (CANOE_UI_SAFE_TOP_MIN, Height / 16);
+    SfbGfxFill (0, 0, Width, Height, &mSfbColorBackground);
     SfbDrawStatusBar ();
-    SfbGfxFill (0, mSfbSafeTop, Width, 168, &mSfbColorSurface);
-    SfbGfxFill (0, mSfbSafeTop + 164, Width, 4, &mSfbColorPrimary);
+    SfbGfxFill (0, mSfbSafeTop, Width, CANOE_UI_HEADER_HEIGHT, &mSfbColorSurface);
+    SfbGfxFill (0, mSfbSafeTop + CANOE_UI_HEADER_HEIGHT - 4,
+                Width, 4, &mSfbColorPrimary);
     UnicodeSPrint (Header, sizeof (Header), L"%s", Title);
-    SfbGfxText (72, mSfbSafeTop + 36, 60, Header, &mSfbColorText);
+    TitleSize = SfbGfxFitText (CANOE_UI_TITLE_FONT, 34,
+                              Width - 2 * CANOE_UI_SIDE_MARGIN, Header);
+    SfbGfxText (CANOE_UI_SIDE_MARGIN, mSfbSafeTop + 38,
+                TitleSize, Header, &mSfbColorText);
     if (Subtitle != NULL) {
-      SfbGfxText (72, mSfbSafeTop + 184, 32, Subtitle, &mSfbColorMuted);
-      mSfbGfxY = mSfbSafeTop + 244;
+      SfbGfxText (CANOE_UI_SIDE_MARGIN,
+                  mSfbSafeTop + CANOE_UI_HEADER_HEIGHT + 24,
+                  SfbGfxFitText (CANOE_UI_SUBTITLE_FONT, 22,
+                                 Width - 2 * CANOE_UI_SIDE_MARGIN, Subtitle),
+                  Subtitle, &mSfbColorMuted);
+      ContentTop = mSfbSafeTop + CANOE_UI_HEADER_HEIGHT + 82;
     } else {
-      mSfbGfxY = mSfbSafeTop + 204;
+      ContentTop = mSfbSafeTop + CANOE_UI_HEADER_HEIGHT + 34;
     }
+    mSfbGfxY = ContentTop;
+    Available = (Height > ContentTop + CANOE_UI_FOOTER_HEIGHT + 20)
+                  ? Height - ContentTop - CANOE_UI_FOOTER_HEIGHT - 20 : 0;
+    mSfbRowStep = (mSfbVisibleRows != 0) ? Available / mSfbVisibleRows : 0;
+    mSfbRowStep = MIN (CANOE_UI_CARD_MAX_HEIGHT + CANOE_UI_CARD_GAP,
+                       MAX ((UINTN)44, mSfbRowStep));
+    mSfbRowHeight = mSfbRowStep - CANOE_UI_CARD_GAP;
     return;
   }
 
@@ -840,9 +992,12 @@ SfbEndScreen (IN CONST CHAR16 *Footer)
     UINTN  Width = mSfbGop->Mode->Info->HorizontalResolution;
     UINTN  Height = mSfbGop->Mode->Info->VerticalResolution;
 
-    SfbGfxFill (0, Height - 112, Width, 112, &mSfbColorSurface);
-    SfbGfxFill (0, Height - 116, Width, 4, &mSfbColorPrimary);
-    SfbGfxText (72, Height - 84, 36,
+    SfbGfxFill (0, Height - CANOE_UI_FOOTER_HEIGHT, Width,
+                CANOE_UI_FOOTER_HEIGHT, &mSfbColorSurface);
+    SfbGfxFill (0, Height - CANOE_UI_FOOTER_HEIGHT - 4,
+                Width, 4, &mSfbColorPrimary);
+    SfbGfxText (CANOE_UI_SIDE_MARGIN, Height - 76,
+                CANOE_UI_FOOTER_FONT,
                 mSfbLanguage == 0
                   ? L"音量 +/-：移动      电源键：确认"
                   : L"VOL +/-: Move      POWER: Select",
@@ -865,24 +1020,55 @@ SfbEndScreen (IN CONST CHAR16 *Footer)
 VOID
 SfbDrawRow (IN BOOLEAN Selected, IN CONST CHAR16 *Marker, IN CONST CHAR16 *Text)
 {
+  SfbDrawRowIcon (Selected, SfbIconFromMarker (Marker), Marker, Text);
+}
+
+VOID
+SfbSetVisibleRows (IN UINTN Rows)
+{
+  mSfbVisibleRows = MIN (CANOE_UI_VISIBLE_MAX,
+                         MAX (CANOE_UI_VISIBLE_MIN, Rows));
+}
+
+VOID
+SfbDrawRowIcon (IN BOOLEAN Selected, IN CANOE_UI_ICON Icon,
+                IN CONST CHAR16 *FallbackMarker, IN CONST CHAR16 *Text)
+{
   CHAR16  Row[SFB_UI_LINE_CHARS];
 
   if (mSfbGraphical) {
     UINTN  Width = mSfbGop->Mode->Info->HorizontalResolution;
-    UINTN  CardWidth = Width - 144;
+    UINTN  CardWidth = Width - 2 * CANOE_UI_SIDE_MARGIN;
+    UINTN  IconSize = MIN (CANOE_UI_ICON_BOX,
+                           (mSfbRowHeight > 18) ? mSfbRowHeight - 18 : 12);
+    UINTN  IconY = mSfbGfxY + (mSfbRowHeight - IconSize) / 2;
+    UINTN  TextX = CANOE_UI_SIDE_MARGIN + 34 + CANOE_UI_ICON_BOX +
+                   CANOE_UI_TEXT_GAP;
+    UINTN  TextWidth = Width - CANOE_UI_SIDE_MARGIN - TextX - 28;
+    UINT16 TextSize = SfbGfxFitText (CANOE_UI_BODY_FONT,
+                                    CANOE_UI_BODY_FONT_MIN,
+                                    TextWidth, Text);
+    TextSize = (UINT16)MIN ((UINTN)TextSize,
+                            MAX ((UINTN)20, mSfbRowHeight - 16));
+    UINTN  TextY = mSfbGfxY + (mSfbRowHeight - TextSize) / 2;
 
-    SfbGfxFill (72, mSfbGfxY, CardWidth, 104,
+    SfbGfxFill (CANOE_UI_SIDE_MARGIN, mSfbGfxY, CardWidth, mSfbRowHeight,
                 Selected ? &mSfbColorPrimary : &mSfbColorSurface);
-    SfbGfxText (98, mSfbGfxY + 34, 30, Marker,
-                Selected ? &mSfbColorText : &mSfbColorMuted);
-    SfbGfxText (220, mSfbGfxY + 26, 48, Text,
-                &mSfbColorText);
-    mSfbGfxY += 120;
+    if (!Selected) {
+      SfbGfxFill (CANOE_UI_SIDE_MARGIN, mSfbGfxY, 4,
+                  mSfbRowHeight, &mSfbColorDisabled);
+    }
+    SfbGfxIcon (CANOE_UI_SIDE_MARGIN + 28, IconY, IconSize, Icon,
+                Selected ? &mSfbColorBackground : &mSfbColorMuted);
+    SfbGfxText (TextX, TextY, TextSize, Text,
+                Selected ? &mSfbColorBackground : &mSfbColorText);
+    mSfbGfxY += mSfbRowStep;
     return;
   }
 
   UnicodeSPrint (Row, sizeof (Row), L"  %s  %-6s  %s",
-                 Selected ? L">" : L" ", Marker, Text);
+                 Selected ? L">" : L" ",
+                 FallbackMarker != NULL ? FallbackMarker : L" ", Text);
   SfbUiFullRow (Selected ? SFB_ATTR_SELECTED : SFB_ATTR_NORMAL, Row);
 }
 
@@ -1172,6 +1358,7 @@ SfbRunSettings (VOID)
     UnicodeSPrint (Lock, sizeof (Lock),
                    mSfbLanguage == 0 ? L"锁定方式    %s" : L"Lock mode    %s",
                    SfbLockName ());
+    SfbSetVisibleRows (Count);
     SfbBeginScreen (L"Settings",
                     mSfbLanguage == 0 ? L"选择一项进行更改"
                                       : L"Select an item to change");
@@ -1245,6 +1432,7 @@ SfbDrawMenu (IN CONST SFB_MENU_STATE *Menu,
                    ? L"%u 个启动项  /  * 表示默认项"
                    : L"%u boot entries  /  * marks default",
                  (UINT32)Menu->Count);
+  SfbSetVisibleRows (MIN (Menu->Count, (UINTN)SFB_VISIBLE_ROWS));
   SfbBeginScreen (Title, Summary);
 
   if (Menu->Count == 0) {
@@ -1260,6 +1448,7 @@ SfbDrawMenu (IN CONST SFB_MENU_STATE *Menu,
   for (Index = Start; Index < Last; Index++) {
     CONST SFB_BOOT_ENTRY  *Entry = &Menu->Entry[Index];
     CONST CHAR16          *Marker;
+    CANOE_UI_ICON         Icon;
 
     if (Index == Menu->DefaultIndex) {
       Marker = L"*";
@@ -1277,6 +1466,18 @@ SfbDrawMenu (IN CONST SFB_MENU_STATE *Menu,
       }
     }
 
+    switch (Entry->Kind) {
+    case SfbEntryEfiFile:   Icon = (Index == Menu->DefaultIndex) ? CanoeIconInfo : CanoeIconBoot; break;
+    case SfbEntrySubmenu:   Icon = CanoeIconTool; break;
+    case SfbEntryFastboot:  Icon = CanoeIconUsb; break;
+    case SfbEntrySelector:  Icon = CanoeIconFile; break;
+    case SfbEntrySettings:  Icon = CanoeIconSettings; break;
+    case SfbEntryBack:      Icon = CanoeIconBack; break;
+    case SfbEntryPowerOff:  Icon = CanoeIconPower; break;
+    case SfbEntryRestart:   Icon = CanoeIconRestart; break;
+    default:                Icon = CanoeIconNone; break;
+    }
+
     /* Submenu rows get a trailing '>' so it is obvious they open another list
      * rather than launch an image. */
     if (Entry->Kind == SfbEntrySubmenu) {
@@ -1284,10 +1485,10 @@ SfbDrawMenu (IN CONST SFB_MENU_STATE *Menu,
 
       UnicodeSPrint (Text, sizeof (Text), L"%s >",
                      SfbUiEntryText (Entry->Kind, Entry->Desc));
-      SfbDrawRow ((BOOLEAN)(Index == Cursor), Marker, Text);
+      SfbDrawRowIcon ((BOOLEAN)(Index == Cursor), Icon, Marker, Text);
     } else {
-      SfbDrawRow ((BOOLEAN)(Index == Cursor), Marker,
-                  SfbUiEntryText (Entry->Kind, Entry->Desc));
+      SfbDrawRowIcon ((BOOLEAN)(Index == Cursor), Icon, Marker,
+                      SfbUiEntryText (Entry->Kind, Entry->Desc));
     }
   }
 

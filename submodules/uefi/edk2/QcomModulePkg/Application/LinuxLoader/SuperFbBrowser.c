@@ -290,6 +290,7 @@ SfbDriverActionMenu (IN EFI_HANDLE   Volume,
     SFB_KEY     Key;
     EFI_STATUS  Status;
 
+    SfbSetVisibleRows (ARRAY_SIZE (Actions));
     SfbBeginScreen (L"EFI Driver", FullPath);
 
     for (Index = 0; Index < ARRAY_SIZE (Actions); Index++) {
@@ -362,6 +363,7 @@ SfbEfiActionMenu (IN EFI_HANDLE   Volume,
     UINTN    Index;
     SFB_KEY  Key;
 
+    SfbSetVisibleRows (ARRAY_SIZE (Actions));
     SfbBeginScreen (L"EFI Application", FullPath);
 
     for (Index = 0; Index < ARRAY_SIZE (Actions); Index++) {
@@ -467,6 +469,7 @@ SfbBrowseVolume (IN EFI_HANDLE   Volume,
       Reload = FALSE;
     }
 
+    SfbSetVisibleRows (MIN (Count, (UINTN)SFB_VISIBLE_ROWS));
     SfbBeginScreen (VolumeLabel, Path);
 
     Start = SfbWindowStart (Cursor, Count, SFB_VISIBLE_ROWS);
@@ -486,7 +489,9 @@ SfbBrowseVolume (IN EFI_HANDLE   Volume,
         Marker = L"   ";
       }
 
-      SfbDrawRow ((BOOLEAN)(Index == Cursor), Marker, List[Index].Name);
+      SfbDrawRowIcon ((BOOLEAN)(Index == Cursor),
+                      List[Index].IsDir ? CanoeIconFile : CanoeIconBoot,
+                      Marker, List[Index].Name);
     }
 
     if (Last < Count) {
@@ -624,6 +629,7 @@ SfbRunFileBrowser (VOID)
     UINTN    Last;
     SFB_KEY  Key;
 
+    SfbSetVisibleRows (MIN (RowCount, (UINTN)SFB_VISIBLE_ROWS));
     SfbBeginScreen (L"EFI Program Selector", L"Choose a FAT32 volume to browse.");
 
     Start = SfbWindowStart (Cursor, RowCount, SFB_VISIBLE_ROWS);
@@ -634,9 +640,11 @@ SfbRunFileBrowser (VOID)
 
     for (Index = Start; Index < Last; Index++) {
       if (Index == VolumeCount) {
-        SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", SfbLocalize (L"Back"));
+        SfbDrawRowIcon ((BOOLEAN)(Index == Cursor), CanoeIconBack,
+                        L" ", SfbLocalize (L"Back"));
       } else {
-        SfbDrawRow ((BOOLEAN)(Index == Cursor), L"[V]", Rows[Index].Label);
+        SfbDrawRowIcon ((BOOLEAN)(Index == Cursor), CanoeIconFile,
+                        L"[V]", Rows[Index].Label);
       }
     }
 

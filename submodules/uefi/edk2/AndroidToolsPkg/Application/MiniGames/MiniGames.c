@@ -43,16 +43,20 @@ PlayGuessNumber (IN OUT UINT32 *RandomState)
   UINTN   Guess = 10;
   UINTN   Attempts = 0;
   AT_KEY  Key;
-  CHAR16  Current[64];
+  CHAR16  Current[16];
+  CHAR16  Detail[80];
   CHAR16  Result[64];
   CONST CHAR16 *Hint = NULL;
 
   while (TRUE) {
-    AtUiBeginScreen (L"Guess Number", Hint);
-    UnicodeSPrint (Current, sizeof (Current),
-                   AtUiIsChinese () ? L"当前猜测：%u" : L"Current guess: %u",
-                   (UINT32)Guess);
-    AtUiDrawRow (TRUE, L"NUM", Current);
+    UnicodeSPrint (Current, sizeof (Current), L"%u", (UINT32)Guess);
+    UnicodeSPrint (Detail, sizeof (Detail),
+                   AtUiIsChinese () ? L"%s    已尝试 %u 次"
+                                     : L"%s    %u attempts",
+                   Hint != NULL ? AtUiLocalize (Hint) :
+                     (AtUiIsChinese () ? L"选择 1-20" : L"Choose 1-20"),
+                   (UINT32)Attempts);
+    AtUiDrawFocusScreen (L"Guess Number", Current, Detail, 3);
     AtUiEndScreen (L"Vol+/- change, power submit");
     Key = AtUiWaitForKey (0);
     if (Key == AtKeyUp) {
@@ -67,7 +71,8 @@ PlayGuessNumber (IN OUT UINT32 *RandomState)
                        AtUiIsChinese () ? L"猜中了！共尝试 %u 次"
                                          : L"You got it in %u attempts!",
                        (UINT32)Attempts);
-        AtUiShowMessage (Result);
+        AtUiDrawFocusScreen (L"Guess Number", L"OK", Result, 1);
+        AtUiEndScreen (L"Press power to continue");
         AtUiWaitForKey (0);
         AtUiDebounce ();
         return;
@@ -89,20 +94,19 @@ ReactionRound (IN UINTN Round, IN OUT UINT32 *RandomState, OUT UINTN *Elapsed)
   UnicodeSPrint (RoundText, sizeof (RoundText),
                  AtUiIsChinese () ? L"第 %u / 3 轮" : L"Round %u / 3",
                  (UINT32)Round);
-  AtUiBeginScreen (L"Reaction Challenge", RoundText);
-  AtUiWriteLine (L"Wait for GO");
+  AtUiDrawFocusScreen (L"Reaction Challenge", L"...", RoundText, 2);
   AtUiEndScreen (AtUiIsChinese () ? L"提前按键会判定抢跑" : L"Pressing early is a false start");
   Key = AtUiWaitForKey (Delay);
   if (Key != AtKeyTimeout) {
     AtUiDebounce ();
-    AtUiShowMessage (L"False start!");
+    AtUiDrawFocusScreen (L"Reaction Challenge", L"!", L"False start!", 2);
+    AtUiEndScreen (L"Press power to continue");
     AtUiWaitForKey (0);
     AtUiDebounce ();
     return FALSE;
   }
 
-  AtUiBeginScreen (L"Reaction Challenge", RoundText);
-  AtUiWriteLine (L"GO! Press power");
+  AtUiDrawFocusScreen (L"Reaction Challenge", L"GO!", RoundText, 1);
   AtUiEndScreen (AtUiIsChinese () ? L"现在按下电源键" : L"Press power now");
   for (Ticks = 1; Ticks <= 500; Ticks++) {
     Key = AtUiWaitForKey (10);
@@ -136,7 +140,8 @@ PlayReaction (IN OUT UINT32 *RandomState)
                    AtUiIsChinese () ? L"本轮反应：%u 毫秒"
                                      : L"Reaction: %u ms",
                    (UINT32)Elapsed);
-    AtUiShowMessage (Result);
+    AtUiDrawFocusScreen (L"Reaction Challenge", L"OK", Result, 1);
+    AtUiEndScreen (L"Press power to continue");
     AtUiWaitForKey (0);
     AtUiDebounce ();
     Round++;
@@ -145,7 +150,9 @@ PlayReaction (IN OUT UINT32 *RandomState)
                  AtUiIsChinese () ? L"平均 %u 毫秒，最佳 %u 毫秒"
                                    : L"Average %u ms, best %u ms",
                  (UINT32)(Total / 3), (UINT32)Best);
-  AtUiShowMessage (Result);
+  AtUiDrawFocusScreen (L"Reaction Challenge",
+                       AtUiIsChinese () ? L"完成" : L"DONE", Result, 3);
+  AtUiEndScreen (L"Press power to continue");
   AtUiWaitForKey (0);
   AtUiDebounce ();
 }

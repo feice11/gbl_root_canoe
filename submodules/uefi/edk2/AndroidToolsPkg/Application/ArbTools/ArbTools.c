@@ -183,56 +183,18 @@ Out:
   }
 }
 
-/**
-  Require five separate confirmations, at least one second apart, before the
-  destructive write is allowed. The reset writes the DeviceInfo blob back
-  through the Verified Boot protocol, which is a TEE write that can lose keys,
-  so each confirm must be a deliberate action: a 1s stall (and input flush)
-  precedes every prompt, enforcing the interval and dropping any key held over
-  from the previous step.
-
-  Returns TRUE only if all five confirmations were given.
-**/
+/** Show the risk first, then a final Cancel/Confirm menu defaulting to Cancel. */
 STATIC
 BOOLEAN
-AtConfirmReset5x (
+AtConfirmReset (
   VOID
   )
 {
-  UINTN  Step;
-  AT_KEY Key;
-  CHAR16 Progress[48];
-
-  for (Step = 1; Step <= 5; Step++) {
-    /* Enforce >=1s since the previous confirmation and drop any key held over
-     * from it, so each confirm is a separate deliberate action. */
-    gBS->Stall (1000000);  /* 1 second */
-    gST->ConIn->Reset (gST->ConIn, FALSE);
-
-    AtUiBeginScreen (L"Reset ARB Index", NULL);
-    AtUiWriteLine (AtUiIsChinese ()
-                   ? L"警告：此操作会写入 TEE，可能造成密钥丢失。"
-                   : L"WARNING: this writes to the TEE and may lose keys.");
-    UnicodeSPrint (Progress, sizeof (Progress),
-                   AtUiIsChinese () ? L"确认进度 %u / 5" : L"Confirm %u / 5",
-                   (UINT32)Step);
-    AtUiWriteLine (Progress);
-    AtUiEndScreen (AtUiIsChinese ()
-                   ? L"电源键确认，音量键取消"
-                   : L"Power confirm, volume cancel");
-
-    Key = AtUiWaitForKey (0);
-    if (Key != AtKeySelect) {
-      AtUiShowMessage (L"Reset cancelled");
-      gBS->Stall (1000000);
-      return FALSE;
-    }
-    AtUiDebounce ();
-  }
-
-  /* Final 1s interval before the destructive write begins. */
-  gBS->Stall (1000000);
-  return TRUE;
+  return AtUiConfirmDanger (
+           L"Reset ARB Index",
+           AtUiIsChinese ()
+             ? L"警告：此操作会写入 TEE，可能造成密钥丢失。"
+             : L"WARNING: this writes to the TEE and may lose keys.");
 }
 
 /**
@@ -247,7 +209,9 @@ AtResetArbValues (
   DeviceInfo  Info;
   EFI_STATUS  Status;
 
-  if (!AtConfirmReset5x ()) {
+  if (!AtConfirmReset ()) {
+    AtUiShowMessage (L"Reset cancelled");
+    gBS->Stall (1000000);
     return;
   }
 

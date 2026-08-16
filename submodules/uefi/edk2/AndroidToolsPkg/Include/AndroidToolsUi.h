@@ -11,6 +11,7 @@
 #define __ANDROID_TOOLS_UI_H__
 
 #include <Uefi.h>
+#include "../../QcomModulePkg/Application/LinuxLoader/CanoeUiStyle.h"
 
 typedef enum {
   AtKeyTimeout = 0,
@@ -81,10 +82,39 @@ AtUiDrawRow (
   IN CONST CHAR16 *Text
   );
 
+VOID
+AtUiSetVisibleRows (
+  IN UINTN Rows
+  );
+
+VOID
+AtUiDrawRowIcon (
+  IN BOOLEAN       Selected,
+  IN CANOE_UI_ICON Icon,
+  IN CONST CHAR16 *FallbackMarker,
+  IN CONST CHAR16 *Text
+  );
+
 /** Draw one normal content line using the shared graphical font. */
 VOID
 AtUiWriteLine (
   IN CONST CHAR16 *Text
+  );
+
+/** Draw a centered large-value game/status screen with an optional detail. */
+VOID
+AtUiDrawFocusScreen (
+  IN CONST CHAR16 *Title,
+  IN CONST CHAR16 *Value,
+  IN CONST CHAR16 *Detail OPTIONAL,
+  IN UINTN         State
+  );
+
+/** Two-stage destructive confirmation. Cursor starts on Cancel. */
+BOOLEAN
+AtUiConfirmDanger (
+  IN CONST CHAR16 *Title,
+  IN CONST CHAR16 *Warning
   );
 
 /** First row of the visible window, chosen to keep Cursor inside it. **/

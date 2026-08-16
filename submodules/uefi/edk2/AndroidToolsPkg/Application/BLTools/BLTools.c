@@ -94,12 +94,8 @@ AtDevInfoWrite (
 /* ---- confirmation ------------------------------------------------------- */
 
 /**
-  Show Title + Warning and require one deliberate confirmation. A 1s stall and
-  input flush precede the prompt so the power press that selected the action in
-  the menu cannot bleed through and auto-confirm: the user must release and
-  press again. Volume keys cancel.
-
-  Returns TRUE only on a fresh power press.
+  Show the warning, then a final Cancel/Confirm menu. The shared UI defaults
+  the cursor to Cancel and debounces between both stages.
 **/
 STATIC
 BOOLEAN
@@ -108,26 +104,11 @@ BlConfirm (
   IN CONST CHAR16 *Warning
   )
 {
-  AT_KEY Key;
-
-  /* 1s: let the selecting key release, then drop anything held over so it
-   * cannot confirm the prompt the instant it appears. */
-  gBS->Stall (1000000);
-  gST->ConIn->Reset (gST->ConIn, FALSE);
-
-  AtUiBeginScreen (Title, NULL);
-  AtUiWriteLine ((Warning != NULL) ? Warning : L"");
-  AtUiEndScreen (AtUiIsChinese ()
-                 ? L"电源键确认，音量键取消"
-                 : L"Power confirm, volume cancel");
-
-  Key = AtUiWaitForKey (0);
-  if (Key != AtKeySelect) {
+  if (!AtUiConfirmDanger (Title, Warning)) {
     AtUiShowMessage (L"Cancelled");
     gBS->Stall (1000000);
     return FALSE;
   }
-  AtUiDebounce ();
   return TRUE;
 }
 
