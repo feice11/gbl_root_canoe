@@ -61,24 +61,32 @@ SfbUiChinese (IN CONST CHAR16 *Text)
 {
   if (Text == NULL)                         return L"";
   if (StrCmp (Text, L"Boot Menu") == 0)     return L"启动菜单";
-  if (StrCmp (Text, L"Android Tools") == 0) return L"安卓工具";
-  if (StrCmp (Text, L"Android") == 0)       return L"启动安卓";
-  if (StrCmp (Text, L"Enter Fastboot") == 0)return L"进入 Fastboot";
-  if (StrCmp (Text, L"Enter EFI Program Selector") == 0) return L"选择 EFI 程序";
   if (StrCmp (Text, L"EFI Program Selector") == 0) return L"EFI 程序选择器";
-  if (StrCmp (Text, L"Power Off") == 0)     return L"关机";
-  if (StrCmp (Text, L"Restart") == 0)       return L"重新启动";
-  if (StrCmp (Text, L"Back") == 0)          return L"返回";
   if (StrCmp (Text, L"Action failed") == 0) return L"操作失败";
   if (StrCmp (Text, L"Action complete") == 0) return L"操作完成";
   if (StrCmp (Text, L"Launching") == 0)     return L"正在启动";
   if (StrCmp (Text, L"Power") == 0)         return L"电源选项";
   if (StrCmp (Text, L"Boot control") == 0)  return L"启动控制";
   if (StrCmp (Text, L"Fastboot") == 0)      return L"Fastboot 模式";
-  if (StrCmp (Text, L"Reboot Tools") == 0)  return L"重启工具";
-  if (StrCmp (Text, L"BL Tools") == 0)      return L"引导锁工具";
-  if (StrCmp (Text, L"ARB Tools") == 0)     return L"防回滚工具";
   return Text;
+}
+
+/* Entry descriptions loaded from BOOTENTRIES/ENTRIES are user data. Never
+ * translate them by matching their text: a custom entry named "Android" or
+ * "Android Tools" must remain exactly as configured. Only built-in rows are
+ * localized, selected by their semantic kind. */
+STATIC
+CONST CHAR16 *
+SfbUiEntryText (IN SFB_ENTRY_KIND Kind, IN CONST CHAR16 *Text)
+{
+  switch (Kind) {
+  case SfbEntryFastboot: return L"进入 Fastboot";
+  case SfbEntrySelector: return L"选择 EFI 程序";
+  case SfbEntryBack:     return L"返回";
+  case SfbEntryPowerOff: return L"关机";
+  case SfbEntryRestart:  return L"重新启动";
+  default:               return Text != NULL ? Text : L"";
+  }
 }
 
 STATIC
@@ -496,7 +504,7 @@ SfbDrawRow (IN BOOLEAN Selected, IN CONST CHAR16 *Marker, IN CONST CHAR16 *Text)
                 Selected ? &mSfbColorPrimary : &mSfbColorSurface);
     SfbGfxText (98, mSfbGfxY + 34, 30, Marker,
                 Selected ? &mSfbColorText : &mSfbColorMuted);
-    SfbGfxText (220, mSfbGfxY + 26, 48, SfbUiChinese (Text),
+    SfbGfxText (220, mSfbGfxY + 26, 48, Text,
                 &mSfbColorText);
     mSfbGfxY += 120;
     return;
@@ -680,10 +688,12 @@ SfbDrawMenu (IN CONST SFB_MENU_STATE *Menu,
     if (Entry->Kind == SfbEntrySubmenu) {
       CHAR16  Text[SFB_DESC_CHARS + 4];
 
-      UnicodeSPrint (Text, sizeof (Text), L"%s >", Entry->Desc);
+      UnicodeSPrint (Text, sizeof (Text), L"%s >",
+                     SfbUiEntryText (Entry->Kind, Entry->Desc));
       SfbDrawRow ((BOOLEAN)(Index == Cursor), Marker, Text);
     } else {
-      SfbDrawRow ((BOOLEAN)(Index == Cursor), Marker, Entry->Desc);
+      SfbDrawRow ((BOOLEAN)(Index == Cursor), Marker,
+                  SfbUiEntryText (Entry->Kind, Entry->Desc));
     }
   }
 
