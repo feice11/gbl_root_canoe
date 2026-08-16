@@ -23,9 +23,89 @@
 /* Keeps the translation unit legal when the feature is compiled out. */
 CONST CHAR8 *gSfbMenuModuleTag = "SuperFbMenu";
 
+/*
+ * Keep the UI on Simple Text Output instead of depending on a particular GOP
+ * pixel format or a bundled font. Qualcomm targets consistently expose this
+ * protocol, and filling complete text rows still gives us a predictable,
+ * polished UI on both portrait handsets and development boards.
+ */
 #define SFB_ATTR_NORMAL    EFI_TEXT_ATTR (EFI_LIGHTGRAY, EFI_BLACK)
-#define SFB_ATTR_SELECTED  EFI_TEXT_ATTR (EFI_BLACK, EFI_LIGHTGRAY)
-#define SFB_ATTR_TITLE     EFI_TEXT_ATTR (EFI_WHITE, EFI_BLACK)
+#define SFB_ATTR_MUTED     EFI_TEXT_ATTR (EFI_DARKGRAY, EFI_BLACK)
+#define SFB_ATTR_ACCENT    EFI_TEXT_ATTR (EFI_CYAN, EFI_BLACK)
+#define SFB_ATTR_SELECTED  EFI_TEXT_ATTR (EFI_WHITE, EFI_BLUE)
+#define SFB_ATTR_TITLE     EFI_TEXT_ATTR (EFI_WHITE, EFI_BLUE)
+#define SFB_ATTR_SUCCESS   EFI_TEXT_ATTR (EFI_LIGHTGREEN, EFI_BLACK)
+#define SFB_ATTR_ERROR     EFI_TEXT_ATTR (EFI_LIGHTRED, EFI_BLACK)
+
+#define SFB_UI_LINE_CHARS  160
+
+/* Leave the final physical column unused: several firmware consoles wrap as
+ * soon as it is written, which would otherwise insert a blank line per row. */
+STATIC UINTN  mSfbColumns = 79;
+
+STATIC
+VOID
+SfbUiRefreshGeometry (VOID)
+{
+  UINTN       Columns;
+  UINTN       Rows;
+  EFI_STATUS  Status;
+
+  if (gST->ConOut->Mode == NULL || gST->ConOut->Mode->Mode < 0) {
+    return;
+  }
+
+  Status = gST->ConOut->QueryMode (
+                         gST->ConOut,
+                         (UINTN)gST->ConOut->Mode->Mode,
+                         &Columns,
+                         &Rows
+                         );
+  if (!EFI_ERROR (Status) && Columns >= 40) {
+    mSfbColumns = MIN (Columns - 1, SFB_UI_LINE_CHARS - 1);
+  }
+  (VOID)Rows;
+}
+
+/* Print a complete, padded row. Besides looking like a real selection card,
+ * this also erases remnants when a shorter label replaces a longer one. */
+STATIC
+VOID
+SfbUiFullRow (IN UINTN Attribute, IN CONST CHAR16 *Text)
+{
+  CHAR16  Line[SFB_UI_LINE_CHARS];
+  UINTN   Length;
+  UINTN   Index;
+
+  if (Text == NULL) {
+    Text = L"";
+  }
+
+  StrnCpyS (Line, ARRAY_SIZE (Line), Text, mSfbColumns);
+  Length = StrLen (Line);
+  for (Index = Length; Index < mSfbColumns; Index++) {
+    Line[Index] = L' ';
+  }
+  Line[mSfbColumns] = L'\0';
+
+  gST->ConOut->SetAttribute (gST->ConOut, Attribute);
+  gST->ConOut->OutputString (gST->ConOut, Line);
+  gST->ConOut->OutputString (gST->ConOut, L"\r\n");
+}
+
+STATIC
+VOID
+SfbUiRule (VOID)
+{
+  CHAR16  Rule[SFB_UI_LINE_CHARS];
+  UINTN   Index;
+
+  for (Index = 0; Index < mSfbColumns; Index++) {
+    Rule[Index] = L'-';
+  }
+  Rule[mSfbColumns] = L'\0';
+  SfbUiFullRow (SFB_ATTR_ACCENT, Rule);
+}
 
 SFB_KEY
 SfbWaitForKey (IN UINT32 TimeoutMs)
@@ -108,31 +188,43 @@ SfbWaitForKey (IN UINT32 TimeoutMs)
 VOID
 SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
-  Print (L"%s\r\n", Title);
+  CHAR16  Header[SFB_UI_LINE_CHARS];
+
+  SfbUiRefreshGeometry ();
   gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
+  gST->ConOut->ClearScreen (gST->ConOut);
+  gST->ConOut->EnableCursor (gST->ConOut, FALSE);
+
+  UnicodeSPrint (Header, sizeof (Header), L"  CANOE  /  %s", Title);
+  SfbUiFullRow (SFB_ATTR_TITLE, Header);
+  SfbUiRule ();
   if (Subtitle != NULL) {
-    Print (L"%s\r\n", Subtitle);
+    UnicodeSPrint (Header, sizeof (Header), L"  %s", Subtitle);
+    SfbUiFullRow (SFB_ATTR_MUTED, Header);
   }
-  Print (L"\r\n");
+  SfbUiFullRow (SFB_ATTR_NORMAL, L"");
 }
 
 VOID
 SfbEndScreen (IN CONST CHAR16 *Footer)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
-  Print (L"\r\n%s\r\n", Footer);
+  CHAR16  Hint[SFB_UI_LINE_CHARS];
+
+  SfbUiFullRow (SFB_ATTR_NORMAL, L"");
+  SfbUiRule ();
+  UnicodeSPrint (Hint, sizeof (Hint), L"  [VOL +/-] Navigate    [POWER] %s",
+                 Footer != NULL ? Footer : L"Select");
+  SfbUiFullRow (SFB_ATTR_MUTED, Hint);
 }
 
 VOID
 SfbDrawRow (IN BOOLEAN Selected, IN CONST CHAR16 *Marker, IN CONST CHAR16 *Text)
 {
-  gST->ConOut->SetAttribute (gST->ConOut,
-                             Selected ? SFB_ATTR_SELECTED : SFB_ATTR_NORMAL);
-  Print (L"%s %s %s", Selected ? L">" : L" ", Marker, Text);
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
-  Print (L"\r\n");
+  CHAR16  Row[SFB_UI_LINE_CHARS];
+
+  UnicodeSPrint (Row, sizeof (Row), L"  %s  %-6s  %s",
+                 Selected ? L">" : L" ", Marker, Text);
+  SfbUiFullRow (Selected ? SFB_ATTR_SELECTED : SFB_ATTR_NORMAL, Row);
 }
 
 /*
@@ -174,9 +266,14 @@ SfbMoveCursor (IN OUT UINTN *Cursor, IN UINTN Count, IN SFB_KEY Key)
 VOID
 SfbReportStatus (IN CONST CHAR16 *What, IN EFI_STATUS Status)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
-  Print (L"\r\n%s: %r\r\n", What, Status);
-  Print (L"Press power to continue.\r\n");
+  CHAR16  Detail[SFB_UI_LINE_CHARS];
+
+  SfbBeginScreen (EFI_ERROR (Status) ? L"Action failed" : L"Action complete",
+                  What);
+  UnicodeSPrint (Detail, sizeof (Detail), L"  Status  %r", Status);
+  SfbUiFullRow (EFI_ERROR (Status) ? SFB_ATTR_ERROR : SFB_ATTR_SUCCESS,
+                Detail);
+  SfbEndScreen (L"Continue");
   SfbWaitForKey (0);
 }
 
@@ -189,13 +286,10 @@ SfbReportStatus (IN CONST CHAR16 *What, IN EFI_STATUS Status)
 VOID
 SfbShowFastbootMode (VOID)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
-  gST->ConOut->EnableCursor (gST->ConOut, FALSE);
-
-  Print (L"FASTBOOT MODE\r\n");
-
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
+  SfbBeginScreen (L"Fastboot", L"USB service is ready");
+  SfbUiFullRow (SFB_ATTR_SUCCESS, L"  ONLINE");
+  SfbUiFullRow (SFB_ATTR_NORMAL,
+                L"  Connect a host and use fastboot to manage this device.");
 }
 
 /*
@@ -206,19 +300,18 @@ SfbShowFastbootMode (VOID)
 VOID
 SfbShowBootingScreen (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_TITLE);
   /*
    * An unattended default boot must not blank whatever is already on screen
    * (typically the boot splash): only clear when the launch came from the menu,
    * where the menu itself is what needs clearing away.
    */
   if (ClearScreen) {
-    gST->ConOut->ClearScreen (gST->ConOut);
+    SfbBeginScreen (L"Launching", L"Starting the selected EFI application");
   }
   gST->ConOut->EnableCursor (gST->ConOut, FALSE);
-
-  Print (L"Booting %s\r\n", (Name != NULL && Name[0] != L'\0') ? Name : L"...");
-
+  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_SUCCESS);
+  Print (L"  Booting %s ...\r\n",
+         (Name != NULL && Name[0] != L'\0') ? Name : L"application");
   gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
 }
 
@@ -230,13 +323,8 @@ SfbShowBootingScreen (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen)
 VOID
 SfbShowActionScreen (IN CONST CHAR16 *Text)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
-  gST->ConOut->EnableCursor (gST->ConOut, FALSE);
-
-  Print (L"%s\r\n", Text);
-
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
+  SfbBeginScreen (L"Power", L"Please wait");
+  SfbUiFullRow (SFB_ATTR_ACCENT, Text);
 }
 
 /*
@@ -249,13 +337,8 @@ SfbShowActionScreen (IN CONST CHAR16 *Text)
 VOID
 SfbShowEnteringMenu (VOID)
 {
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_TITLE);
-  gST->ConOut->ClearScreen (gST->ConOut);
-  gST->ConOut->EnableCursor (gST->ConOut, FALSE);
-
-  Print (L"Entering Boot Menu\r\n");
-
-  gST->ConOut->SetAttribute (gST->ConOut, SFB_ATTR_NORMAL);
+  SfbBeginScreen (L"Boot control", L"Preparing devices and boot entries");
+  SfbUiFullRow (SFB_ATTR_ACCENT, L"  INITIALIZING ...");
 
   /* Wait for the key to be released... */
   gBS->Stall (SFB_ENTER_MENU_DELAY_S * 1000 * 1000);
@@ -277,7 +360,11 @@ SfbDrawMenu (IN CONST SFB_MENU_STATE *Menu,
   UINTN  Index;
   UINTN  Last;
 
-  SfbBeginScreen (Title, NULL);
+  CHAR16  Summary[SFB_UI_LINE_CHARS];
+
+  UnicodeSPrint (Summary, sizeof (Summary),
+                 L"%u entries  /  * saved default", (UINT32)Menu->Count);
+  SfbBeginScreen (Title, Summary);
 
   if (Menu->Count == 0) {
     Print (L"  No boot entries found.\r\n");
@@ -291,7 +378,22 @@ SfbDrawMenu (IN CONST SFB_MENU_STATE *Menu,
 
   for (Index = Start; Index < Last; Index++) {
     CONST SFB_BOOT_ENTRY  *Entry = &Menu->Entry[Index];
-    CONST CHAR16          *Marker = (Index == Menu->DefaultIndex) ? L"*" : L" ";
+    CONST CHAR16          *Marker;
+
+    if (Index == Menu->DefaultIndex) {
+      Marker = L"*";
+    } else {
+      switch (Entry->Kind) {
+      case SfbEntryEfiFile:   Marker = L"EFI";   break;
+      case SfbEntrySubmenu:   Marker = L"MENU";  break;
+      case SfbEntryFastboot:  Marker = L"USB";   break;
+      case SfbEntrySelector:  Marker = L"FILES"; break;
+      case SfbEntryBack:      Marker = L"BACK";  break;
+      case SfbEntryPowerOff:
+      case SfbEntryRestart:   Marker = L"POWER"; break;
+      default:                Marker = L"";      break;
+      }
+    }
 
     /* Submenu rows get a trailing '>' so it is obvious they open another list
      * rather than launch an image. */
@@ -309,7 +411,7 @@ SfbDrawMenu (IN CONST SFB_MENU_STATE *Menu,
     Print (L"    ... %u more\r\n", (UINT32)(Menu->Count - Last));
   }
 
-  SfbEndScreen (L"Vol Up/Down: move   Power: select");
+  SfbEndScreen (L"Open");
 }
 
 /*

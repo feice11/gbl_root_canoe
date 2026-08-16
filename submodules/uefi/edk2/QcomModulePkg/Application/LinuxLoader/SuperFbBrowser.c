@@ -296,7 +296,7 @@ SfbDriverActionMenu (IN EFI_HANDLE   Volume,
       SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", Actions[Index]);
     }
 
-    SfbEndScreen (L"Vol Up/Down: move   Power: select");
+    SfbEndScreen (L"Select");
 
     Key = SfbWaitForKey (0);
     if (Key == SfbKeyUp || Key == SfbKeyDown) {
@@ -367,7 +367,7 @@ SfbEfiActionMenu (IN EFI_HANDLE   Volume,
       SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", Actions[Index]);
     }
 
-    SfbEndScreen (L"Vol Up/Down: move   Power: select");
+    SfbEndScreen (L"Select");
 
     Key = SfbWaitForKey (0);
     if (Key == SfbKeyUp || Key == SfbKeyDown) {
@@ -495,7 +495,7 @@ SfbBrowseVolume (IN EFI_HANDLE   Volume,
              (UINT32)SFB_MAX_DIR_ENTRIES);
     }
 
-    SfbEndScreen (L"Vol Up/Down: move   Power: open");
+    SfbEndScreen (L"Open");
 
     Key = SfbWaitForKey (0);
     if (Key == SfbKeyUp || Key == SfbKeyDown) {
@@ -642,7 +642,7 @@ SfbRunFileBrowser (VOID)
       Print (L"    ... %u more\r\n", (UINT32)(RowCount - Last));
     }
 
-    SfbEndScreen (L"Vol Up/Down: move   Power: select");
+    SfbEndScreen (L"Select");
 
     Key = SfbWaitForKey (0);
     if (Key == SfbKeyUp || Key == SfbKeyDown) {
@@ -670,4 +670,3 @@ SfbRunFileBrowser (VOID)
   FreePool (Rows);
   FreePool (Volumes);
 }
-
