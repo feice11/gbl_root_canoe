@@ -317,11 +317,35 @@ NoMemory:
   FreePool (Canvas); FreePool (Saved); return EFI_OUT_OF_RESOURCES;
 }
 
-STATIC VOID SfbAsciiToUnicode (IN CONST CHAR8 *In, OUT CHAR16 *Out, IN UINTN Max)
+STATIC INTN SfbHexNibble (IN CHAR8 C)
+{
+  if (C >= '0' && C <= '9') return C - '0';
+  if (C >= 'A' && C <= 'F') return C - 'A' + 10;
+  if (C >= 'a' && C <= 'f') return C - 'a' + 10;
+  return -1;
+}
+
+STATIC BOOLEAN SfbConfigToUnicode (IN CONST CHAR8 *In, OUT CHAR16 *Out,
+                                   IN UINTN Max)
 {
   UINTN I;
+  if (In[0] == 'u') {
+    UINTN Length = AsciiStrLen (In + 1);
+    if ((Length & 3) != 0 || Length / 4 + 1 > Max) return FALSE;
+    for (I = 0; I < Length / 4; I++) {
+      INTN A = SfbHexNibble (In[1 + I * 4]);
+      INTN B = SfbHexNibble (In[2 + I * 4]);
+      INTN C = SfbHexNibble (In[3 + I * 4]);
+      INTN D = SfbHexNibble (In[4 + I * 4]);
+      if (A < 0 || B < 0 || C < 0 || D < 0) return FALSE;
+      Out[I] = (CHAR16)((A << 12) | (B << 8) | (C << 4) | D);
+    }
+    Out[I] = L'\0';
+    return TRUE;
+  }
   for (I = 0; I + 1 < Max && In[I] != '\0'; I++) Out[I] = (CHAR16)(UINT8)In[I];
   Out[I] = L'\0';
+  return In[I] == '\0';
 }
 
 STATIC EFI_STATUS SfbReadAsset (IN CONST CHAR8 *WantLabel,
@@ -331,8 +355,9 @@ STATIC EFI_STATUS SfbReadAsset (IN CONST CHAR8 *WantLabel,
   UINTN Count = 0, Index;
   CHAR16 Path[SFB_PATH_CHARS], Label[SFB_DESC_CHARS], Want[SFB_DESC_CHARS];
   EFI_STATUS Result = EFI_NOT_FOUND;
-  SfbAsciiToUnicode (AsciiPath, Path, ARRAY_SIZE (Path));
-  SfbAsciiToUnicode (WantLabel, Want, ARRAY_SIZE (Want));
+  if (!SfbConfigToUnicode (AsciiPath, Path, ARRAY_SIZE (Path)) ||
+      !SfbConfigToUnicode (WantLabel, Want, ARRAY_SIZE (Want)))
+    return EFI_INVALID_PARAMETER;
   *Data = NULL; *DataBytes = 0;
   if (EFI_ERROR (SfbLocateVolumes (&Volumes, &Count)) || Volumes == NULL)
     return EFI_NOT_FOUND;

@@ -114,17 +114,22 @@ SfbIsImageFile (IN CONST CHAR16 *Name)
 }
 
 STATIC BOOLEAN
-SfbUnicodeToConfigAscii (IN CONST CHAR16 *Source, OUT CHAR8 *Dest,
-                         IN UINTN DestBytes)
+SfbUnicodeToConfigHex (IN CONST CHAR16 *Source, OUT CHAR8 *Dest,
+                       IN UINTN DestBytes)
 {
+  STATIC CONST CHAR8 Hex[] = "0123456789ABCDEF";
   UINTN Index;
-  if (Source == NULL || Dest == NULL || DestBytes == 0) return FALSE;
+  if (Source == NULL || Dest == NULL || DestBytes < 2) return FALSE;
+  Dest[0] = 'u';
   for (Index = 0; Source[Index] != L'\0'; Index++) {
-    if (Index + 1 >= DestBytes || Source[Index] < 0x20 ||
-        Source[Index] > 0x7e || Source[Index] == L'|') return FALSE;
-    Dest[Index] = (CHAR8)Source[Index];
+    UINTN Out = 1 + Index * 4;
+    if (Out + 4 >= DestBytes || Source[Index] < 0x20) return FALSE;
+    Dest[Out] = Hex[(Source[Index] >> 12) & 15];
+    Dest[Out + 1] = Hex[(Source[Index] >> 8) & 15];
+    Dest[Out + 2] = Hex[(Source[Index] >> 4) & 15];
+    Dest[Out + 3] = Hex[Source[Index] & 15];
   }
-  Dest[Index] = '\0';
+  Dest[1 + Index * 4] = '\0';
   return TRUE;
 }
 
@@ -662,8 +667,10 @@ SfbBrowseForImage (IN EFI_HANDLE Volume, IN CONST CHAR16 *VolumeLabel,
       CHAR16 FullPath[SFB_PATH_CHARS];
       StrCpyS (FullPath, SFB_PATH_CHARS, Path);
       SfbJoinPath (FullPath, SFB_PATH_CHARS, List[Cursor].Name);
-      if (!SfbUnicodeToConfigAscii (FullPath, OutPath, OutPathBytes)) {
-        SfbReportStatus (L"Asset path must use short ASCII names",
+      if (!SfbUnicodeToConfigHex (FullPath, OutPath, OutPathBytes)) {
+        SfbReportStatus (SfbUiLanguage () == 0
+                           ? L"素材路径过长，无法安全保存"
+                           : L"Asset path is too long to store safely",
                          EFI_BAD_BUFFER_SIZE);
       } else {
         Chosen = TRUE;
@@ -725,7 +732,7 @@ SfbSelectBootAsset (OUT CHAR8 *Label, IN UINTN LabelBytes,
       }
       if (SfbBrowseForImage (Volumes[Cursor], VolumeLabel, BrowseRoot,
                              Path, PathBytes)) {
-        if (!SfbUnicodeToConfigAscii (VolumeLabel, Label, LabelBytes)) Label[0] = '\0';
+        if (!SfbUnicodeToConfigHex (VolumeLabel, Label, LabelBytes)) Label[0] = '\0';
         Chosen = TRUE;
         break;
       }

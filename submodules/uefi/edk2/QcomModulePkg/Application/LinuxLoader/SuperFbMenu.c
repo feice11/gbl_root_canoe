@@ -85,8 +85,8 @@ STATIC BOOLEAN  mSfbDescriptions = TRUE;
 STATIC UINTN    mSfbBootVisual = 1;
 /* 0 = top, 1 = center, 2 = bottom. */
 STATIC UINTN    mSfbBootPosition = 1;
-STATIC CHAR8    mSfbBootAssetLabel[64] = "";
-STATIC CHAR8    mSfbBootAssetPath[384] = "";
+STATIC CHAR8    mSfbBootAssetLabel[192] = "";
+STATIC CHAR8    mSfbBootAssetPath[768] = "";
 STATIC CHAR8    mSfbPin[5] = "1234";
 STATIC BOOLEAN  mSfbSettingsLoaded = FALSE;
 
