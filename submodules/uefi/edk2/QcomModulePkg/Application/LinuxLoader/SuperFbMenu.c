@@ -50,6 +50,8 @@ STATIC BOOLEAN                       mSfbGraphical = FALSE;
 STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL  *mSfbGop = NULL;
 STATIC UINTN                         mSfbGfxY = 0;
 STATIC UINTN                         mSfbSafeTop = 0;
+STATIC BOOLEAN                       mSfbClockCalibrationLoaded = FALSE;
+STATIC UINTN                         mSfbClockOffsetSeconds = 0;
 
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorBackground = { 0x18, 0x12, 0x0d, 0x00 };
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorSurface    = { 0x2d, 0x25, 0x1d, 0x00 };
@@ -420,6 +422,73 @@ SfbReadPowerStatus (OUT BOOLEAN *Available,
   *Percent = SfbBatteryPercentFromVoltage (Millivolts);
 }
 
+/* Android keeps the user-visible clock independently from the Qualcomm RTC on
+ * this device.  The latter can remain in 1970 while still ticking normally.
+ * A Magisk service therefore records the local-time offset in persist; using
+ * the offset instead of setting the RTC avoids disturbing firmware/Android. */
+STATIC
+BOOLEAN
+SfbLoadClockCalibration (VOID)
+{
+  EFI_HANDLE         *Volumes = NULL;
+  UINTN              VolumeCount = 0;
+  UINTN              VolumeIndex;
+  EFI_FILE_PROTOCOL  *Root = NULL;
+  CHAR8              Buffer[32];
+  UINTN              BytesRead;
+  UINTN              Index;
+  UINTN              Value;
+  BOOLEAN            Found = FALSE;
+
+  if (mSfbClockCalibrationLoaded) {
+    return TRUE;
+  }
+  if (EFI_ERROR (SfbLocateVolumes (&Volumes, &VolumeCount)) || Volumes == NULL) {
+    return FALSE;
+  }
+
+  for (VolumeIndex = 0; VolumeIndex < VolumeCount && !Found; VolumeIndex++) {
+    if (!SfbIsExt4Volume (Volumes[VolumeIndex]) ||
+        EFI_ERROR (SfbOpenVolumeRoot (Volumes[VolumeIndex], &Root)) ||
+        Root == NULL) {
+      continue;
+    }
+    ZeroMem (Buffer, sizeof (Buffer));
+    BytesRead = 0;
+    if (!EFI_ERROR (SfbReadFileBytes (Root, L"\\efisp\\CLOCKOFFSET",
+                                      Buffer, sizeof (Buffer) - 1,
+                                      &BytesRead)) &&
+        BytesRead > 10 &&
+        CompareMem (Buffer, "SFCLOCK1 ", 9) == 0) {
+      Value = 0;
+      Found = TRUE;
+      for (Index = 9; Index < BytesRead && Buffer[Index] != '\n' &&
+                      Buffer[Index] != '\r' && Buffer[Index] != '\0'; Index++) {
+        if (Buffer[Index] < '0' || Buffer[Index] > '9') {
+          Found = FALSE;
+          break;
+        }
+        Value = Value * 10 + (UINTN)(Buffer[Index] - '0');
+        if (Value >= 86400) {
+          Found = FALSE;
+          break;
+        }
+      }
+      if (Index == 9) {
+        Found = FALSE;
+      }
+      if (Found) {
+        mSfbClockOffsetSeconds = Value;
+        mSfbClockCalibrationLoaded = TRUE;
+      }
+    }
+    Root->Close (Root);
+    Root = NULL;
+  }
+  FreePool (Volumes);
+  return Found;
+}
+
 STATIC
 VOID
 SfbDrawStatusBar (VOID)
@@ -435,6 +504,7 @@ SfbDrawStatusBar (VOID)
   UINTN     BatteryX;
   UINTN     BatteryY;
   UINTN     FillWidth;
+  UINTN     LocalSeconds;
 
   if (!mSfbGraphical || mSfbSafeTop < 48) {
     return;
@@ -443,12 +513,13 @@ SfbDrawStatusBar (VOID)
   Width = mSfbGop->Mode->Info->HorizontalResolution;
   StatusY = (mSfbSafeTop - 32) / 2;
   if (!EFI_ERROR (gRT->GetTime (&Time, NULL)) &&
-      Time.Hour < 24 && Time.Minute < 60) {
-    /* EFI_TIME is already expressed in the firmware's configured local time;
-     * TimeZone describes its automatic UTC offset and must not be applied a
-     * second time here. */
+      Time.Hour < 24 && Time.Minute < 60 && Time.Second < 60 &&
+      SfbLoadClockCalibration ()) {
+    LocalSeconds = ((UINTN)Time.Hour * 3600 + (UINTN)Time.Minute * 60 +
+                    (UINTN)Time.Second + mSfbClockOffsetSeconds) % 86400;
     UnicodeSPrint (TimeText, sizeof (TimeText), L"%02u:%02u",
-                   (UINT32)Time.Hour, (UINT32)Time.Minute);
+                   (UINT32)(LocalSeconds / 3600),
+                   (UINT32)((LocalSeconds / 60) % 60));
   } else {
     StrCpyS (TimeText, ARRAY_SIZE (TimeText), L"--:--");
   }
