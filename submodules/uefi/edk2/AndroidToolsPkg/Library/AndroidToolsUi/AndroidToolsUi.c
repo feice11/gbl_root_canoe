@@ -577,7 +577,8 @@ AtUiBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
                Width, 4, &mAtPrimary);
     TitleSize = AtGfxFitText (CANOE_UI_TITLE_FONT, 34,
                              Width - 2 * CANOE_UI_SIDE_MARGIN, Title);
-    AtGfxText (CANOE_UI_SIDE_MARGIN, mAtSafeTop + 38,
+    AtGfxText ((Width - AtGfxMeasureText (TitleSize, Title)) / 2,
+               mAtSafeTop + (CANOE_UI_HEADER_HEIGHT - TitleSize) / 2,
                TitleSize, Title, &mAtText);
     if (Subtitle != NULL) {
       AtGfxText (CANOE_UI_SIDE_MARGIN,

@@ -299,6 +299,25 @@ SfbGfxFitText (IN UINT16 Preferred, IN UINT16 Minimum,
 
 STATIC
 VOID
+SfbGfxCenteredText (IN UINTN Y, IN UINT16 Preferred, IN UINT16 Minimum,
+                    IN CONST CHAR16 *Text,
+                    IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color)
+{
+  UINTN Width;
+  UINTN TextWidth;
+  UINT16 Size;
+
+  if (!mSfbGraphical || Text == NULL) return;
+  Width = mSfbGop->Mode->Info->HorizontalResolution;
+  Size = SfbGfxFitText (Preferred, Minimum,
+                        Width - 2 * CANOE_UI_SIDE_MARGIN, Text);
+  TextWidth = SfbGfxMeasureText (Size, Text);
+  SfbGfxText ((Width > TextWidth) ? (Width - TextWidth) / 2 : 0,
+              Y, Size, Text, Color);
+}
+
+STATIC
+VOID
 SfbGfxIcon (IN UINTN X, IN UINTN Y, IN UINTN Size, IN CANOE_UI_ICON Icon,
             IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color)
 {
@@ -946,7 +965,8 @@ SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
     UnicodeSPrint (Header, sizeof (Header), L"%s", Title);
     TitleSize = SfbGfxFitText (CANOE_UI_TITLE_FONT, 34,
                               Width - 2 * CANOE_UI_SIDE_MARGIN, Header);
-    SfbGfxText (CANOE_UI_SIDE_MARGIN, mSfbSafeTop + 38,
+    SfbGfxText ((Width - SfbGfxMeasureText (TitleSize, Header)) / 2,
+                mSfbSafeTop + (CANOE_UI_HEADER_HEIGHT - TitleSize) / 2,
                 TitleSize, Header, &mSfbColorText);
     if (Subtitle != NULL) {
       SfbGfxText (CANOE_UI_SIDE_MARGIN,
@@ -1132,6 +1152,59 @@ SfbReportStatus (IN CONST CHAR16 *What, IN EFI_STATUS Status)
 VOID
 SfbShowFastbootMode (VOID)
 {
+  UINTN Width;
+  UINTN Height;
+  UINTN CardTop;
+  UINTN CardHeight;
+
+  SfbLoadSettings ();
+  SfbUiInitGraphics ();
+  if (mSfbGraphical) {
+    Width = mSfbGop->Mode->Info->HorizontalResolution;
+    Height = mSfbGop->Mode->Info->VerticalResolution;
+    mSfbSafeTop = MAX (CANOE_UI_SAFE_TOP_MIN, Height / 16);
+    SfbGfxFill (0, 0, Width, Height, &mSfbColorBackground);
+    SfbDrawStatusBar ();
+
+    SfbGfxFill (0, mSfbSafeTop, Width,
+                CANOE_UI_HEADER_HEIGHT, &mSfbColorSurface);
+    SfbGfxFill (0, mSfbSafeTop + CANOE_UI_HEADER_HEIGHT - 4,
+                Width, 4, &mSfbColorPrimary);
+    SfbGfxCenteredText (
+      mSfbSafeTop + (CANOE_UI_HEADER_HEIGHT - CANOE_UI_TITLE_FONT) / 2,
+      CANOE_UI_TITLE_FONT, 34, L"SUPERFASTBOOT", &mSfbColorText);
+
+    CardTop = mSfbSafeTop + CANOE_UI_HEADER_HEIGHT + 54;
+    CardHeight = (Height > CardTop + CANOE_UI_FOOTER_HEIGHT + 50)
+                   ? Height - CardTop - CANOE_UI_FOOTER_HEIGHT - 50 : 420;
+    CardHeight = MIN ((UINTN)540, MAX ((UINTN)360, CardHeight));
+    SfbGfxFill (CANOE_UI_SIDE_MARGIN, CardTop,
+                Width - 2 * CANOE_UI_SIDE_MARGIN, CardHeight,
+                &mSfbColorSurface);
+    SfbGfxFill (CANOE_UI_SIDE_MARGIN, CardTop, 6, CardHeight,
+                &mSfbColorPrimary);
+    SfbGfxIcon (Width / 2 - 52, CardTop + 54, 104,
+                CanoeIconUsb, &mSfbColorPrimary);
+    SfbGfxCenteredText (CardTop + 196, 76, 48, L"ONLINE",
+                        &mSfbColorSuccess);
+    SfbGfxCenteredText (
+      CardTop + 310, CANOE_UI_SUBTITLE_FONT, 22,
+      mSfbLanguage == 0 ? L"USB 已就绪，可连接电脑"
+                        : L"USB is ready for a host connection",
+      &mSfbColorMuted);
+
+    SfbGfxFill (0, Height - CANOE_UI_FOOTER_HEIGHT, Width,
+                CANOE_UI_FOOTER_HEIGHT, &mSfbColorSurface);
+    SfbGfxFill (0, Height - CANOE_UI_FOOTER_HEIGHT - 4,
+                Width, 4, &mSfbColorPrimary);
+    SfbGfxCenteredText (
+      Height - 76, CANOE_UI_FOOTER_FONT, 22,
+      mSfbLanguage == 0 ? L"使用 fastboot 命令管理设备"
+                        : L"Manage this device with fastboot commands",
+      &mSfbColorMuted);
+    return;
+  }
+
   SfbBeginScreen (L"Fastboot", L"USB service is ready");
   SfbUiFullRow (SFB_ATTR_SUCCESS, L"  ONLINE");
   SfbUiFullRow (SFB_ATTR_NORMAL,
