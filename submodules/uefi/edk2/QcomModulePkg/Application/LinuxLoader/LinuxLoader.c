@@ -189,10 +189,10 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
 
   EFI_STATUS Status;
   EFI_LOADED_IMAGE_PROTOCOL *LoadedImage = NULL;
-  /* Test build: remain interactive even when launched by an older installed
-   * BDS that cannot pass the superfb-menu load option yet. Do not use this
-   * variant as the permanently installed BDS. */
-  BOOLEAN ForceMenu = TRUE;
+  /* Production default: boot the saved entry when no menu request is present.
+   * A fastboot-loaded image can still explicitly request an interactive,
+   * one-shot session through the superfb-menu load option below. */
+  BOOLEAN ForceMenu = FALSE;
 
    /* Update stack check guard with random value for better security */
   /* SilentMode Boot */
