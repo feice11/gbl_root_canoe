@@ -5,11 +5,18 @@
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/MemoryAllocationLib.h>
+#include <Library/TimerLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Protocol/HiiImageDecoder.h>
 
 #define SFB_ASSET_MAX_BYTES  (16 * 1024 * 1024)
 #define SFB_ASSET_MAX_DIM    4096
+#define SFB_ASSET_MAX_PIXELS (8 * 1024 * 1024)
+
+STATIC VOID   *mSfbAssetRaw;
+STATIC UINTN  mSfbAssetRawBytes;
+STATIC UINTN  mSfbAssetKind;
+STATIC UINT64 mSfbAssetStarted;
 
 typedef struct { CONST UINT8 *P; UINTN N, Pos; UINT32 Bits; UINTN Have; } SFB_BITS;
 typedef struct { UINT16 Code[288]; UINT8 Len[288]; UINTN Count; } SFB_HUFF;
@@ -93,13 +100,221 @@ STATIC EFI_STATUS SfbDecodePng(CONST UINT8 *Raw,UINTN N,EFI_IMAGE_OUTPUT **Out)
     else if(CompareMem(T,"IDAT",4)==0){UINT8 *New=AllocatePool(IdatN+L);if(New==NULL){if(Idat)FreePool(Idat);return EFI_OUT_OF_RESOURCES;}if(IdatN)CopyMem(New,Idat,IdatN);CopyMem(New+IdatN,D,L);if(Idat)FreePool(Idat);Idat=New;IdatN+=L;}
     Pos+=12+L;if(CompareMem(T,"IEND",4)==0)break;
   }
-  if(W==0||H==0||W>SFB_ASSET_MAX_DIM||H>SFB_ASSET_MAX_DIM||Depth!=8||Idat==NULL){if(Idat)FreePool(Idat);return EFI_UNSUPPORTED;}if(Type==2)Bpp=3;else if(Type==6)Bpp=4;else if(Type==3&&PaletteN)Bpp=1;else{FreePool(Idat);return EFI_UNSUPPORTED;}
+  if(W==0||H==0||W>SFB_ASSET_MAX_DIM||H>SFB_ASSET_MAX_DIM||W>SFB_ASSET_MAX_PIXELS/H||Depth!=8||Idat==NULL){if(Idat)FreePool(Idat);return EFI_UNSUPPORTED;}if(Type==2)Bpp=3;else if(Type==6)Bpp=4;else if(Type==3&&PaletteN)Bpp=1;else{FreePool(Idat);return EFI_UNSUPPORTED;}
   Row=W*Bpp;Scan=AllocatePool((Row+1)*H);Pixels=AllocatePool(Row*H);if(!Scan||!Pixels){if(Idat)FreePool(Idat);if(Scan)FreePool(Scan);if(Pixels)FreePool(Pixels);return EFI_OUT_OF_RESOURCES;}
   if(EFI_ERROR(SfbInflate(Idat,IdatN,Scan,(Row+1)*H))){FreePool(Idat);FreePool(Scan);FreePool(Pixels);return EFI_VOLUME_CORRUPTED;}FreePool(Idat);
   for(Y=0;Y<H;Y++){UINT8 F=Scan[Y*(Row+1)];UINT8 *S=Scan+Y*(Row+1)+1,*P=Pixels+Y*Row,*Prev=Y?Pixels+(Y-1)*Row:NULL;for(X=0;X<Row;X++){UINT8 A=X>=Bpp?P[X-Bpp]:0,B=Prev?Prev[X]:0,C=(Prev&&X>=Bpp)?Prev[X-Bpp]:0;UINT8 V=S[X];if(F==1)V+=A;else if(F==2)V+=B;else if(F==3)V+=(UINT8)(((UINTN)A+B)/2);else if(F==4){INTN Pa=(INTN)B-(INTN)C,Pb=(INTN)A-(INTN)C,Pc=Pa+Pb;Pa=Pa<0?-Pa:Pa;Pb=Pb<0?-Pb:Pb;Pc=Pc<0?-Pc:Pc;V+=(Pa<=Pb&&Pa<=Pc)?A:(Pb<=Pc?B:C);}else if(F!=0){FreePool(Scan);FreePool(Pixels);return EFI_UNSUPPORTED;}P[X]=V;}}
   FreePool(Scan);*Out=AllocateZeroPool(sizeof(EFI_IMAGE_OUTPUT));if(*Out==NULL){FreePool(Pixels);return EFI_OUT_OF_RESOURCES;}(*Out)->Width=(UINT16)W;(*Out)->Height=(UINT16)H;(*Out)->Image.Bitmap=AllocatePool(W*H*sizeof(EFI_GRAPHICS_OUTPUT_BLT_PIXEL));if((*Out)->Image.Bitmap==NULL){FreePool(*Out);*Out=NULL;FreePool(Pixels);return EFI_OUT_OF_RESOURCES;}
   for(I=0;I<W*H;I++){EFI_GRAPHICS_OUTPUT_BLT_PIXEL *P=&(*Out)->Image.Bitmap[I];if(Type==3){UINT8 K=Pixels[I];if(K>=PaletteN)K=0;P->Red=Palette[K][0];P->Green=Palette[K][1];P->Blue=Palette[K][2];P->Reserved=Palette[K][3];}else{P->Red=Pixels[I*Bpp];P->Green=Pixels[I*Bpp+1];P->Blue=Pixels[I*Bpp+2];P->Reserved=Bpp==4?Pixels[I*Bpp+3]:255;}}
   FreePool(Pixels);return EFI_SUCCESS;
+}
+
+typedef struct {
+  CONST UINT8 *Data;
+  UINTN Bytes;
+  UINTN Bit;
+} SFB_GIF_BITS;
+
+STATIC BOOLEAN SfbGifCode (IN OUT SFB_GIF_BITS *Bits, IN UINTN Width,
+                           OUT UINT16 *Code)
+{
+  UINTN I;
+  UINT16 Value = 0;
+  if (Width > 12 || Bits->Bit + Width > Bits->Bytes * 8) return FALSE;
+  for (I = 0; I < Width; I++)
+    Value |= (UINT16)(((Bits->Data[(Bits->Bit + I) >> 3] >>
+                         ((Bits->Bit + I) & 7)) & 1) << I);
+  Bits->Bit += Width;
+  *Code = Value;
+  return TRUE;
+}
+
+STATIC EFI_STATUS SfbGifLzw (IN CONST UINT8 *Data, IN UINTN Bytes,
+  IN UINT8 MinimumCodeSize, OUT UINT8 *Pixels, IN UINTN PixelCount)
+{
+  UINT16 Prefix[4096], Code, OldCode = 0, Clear, End, Next;
+  UINT8 Suffix[4096], Stack[4096], First = 0;
+  UINTN CodeSize, StackCount = 0, Output = 0, I;
+  BOOLEAN HaveOld = FALSE;
+  SFB_GIF_BITS Bits;
+  if (MinimumCodeSize < 2 || MinimumCodeSize > 8) return EFI_UNSUPPORTED;
+  Clear = (UINT16)(1U << MinimumCodeSize); End = (UINT16)(Clear + 1);
+  Next = (UINT16)(End + 1); CodeSize = MinimumCodeSize + 1;
+  for (I = 0; I < Clear; I++) { Prefix[I] = 0xffff; Suffix[I] = (UINT8)I; }
+  Bits.Data = Data; Bits.Bytes = Bytes; Bits.Bit = 0;
+  while (SfbGifCode (&Bits, CodeSize, &Code)) {
+    UINT16 Current = Code;
+    if (Code == Clear) { Next = (UINT16)(End + 1); CodeSize = MinimumCodeSize + 1; HaveOld = FALSE; continue; }
+    if (Code == End) break;
+    if (Code > Next || (!HaveOld && Code >= Clear)) return EFI_VOLUME_CORRUPTED;
+    StackCount = 0;
+    if (Code == Next) {
+      if (!HaveOld) return EFI_VOLUME_CORRUPTED;
+      Stack[StackCount++] = First;
+      Current = OldCode;
+    }
+    while (Current >= Clear) {
+      if (Current >= Next || StackCount >= ARRAY_SIZE (Stack)) return EFI_VOLUME_CORRUPTED;
+      Stack[StackCount++] = Suffix[Current]; Current = Prefix[Current];
+    }
+    First = (UINT8)Current; Stack[StackCount++] = First;
+    while (StackCount != 0) {
+      if (Output >= PixelCount) return EFI_BAD_BUFFER_SIZE;
+      Pixels[Output++] = Stack[--StackCount];
+    }
+    if (HaveOld && Next < 4096) {
+      Prefix[Next] = OldCode; Suffix[Next] = First; Next++;
+      if (Next == (1U << CodeSize) && CodeSize < 12) CodeSize++;
+    }
+    OldCode = Code; HaveOld = TRUE;
+  }
+  return Output == PixelCount ? EFI_SUCCESS : EFI_VOLUME_CORRUPTED;
+}
+
+STATIC EFI_STATUS SfbGifSubBlocks (IN CONST UINT8 *Raw, IN UINTN RawBytes,
+  IN OUT UINTN *Position, OUT UINT8 **Data, OUT UINTN *DataBytes)
+{
+  UINTN Pos = *Position, Total = 0;
+  UINT8 *Buffer = NULL;
+  while (Pos < RawBytes) {
+    UINTN Size = Raw[Pos++];
+    UINT8 *NewBuffer;
+    if (Size == 0) { *Position = Pos; *Data = Buffer; *DataBytes = Total; return EFI_SUCCESS; }
+    if (Pos + Size > RawBytes || Total + Size > SFB_ASSET_MAX_BYTES) break;
+    NewBuffer = AllocatePool (Total + Size);
+    if (NewBuffer == NULL) { if (Buffer != NULL) FreePool (Buffer); return EFI_OUT_OF_RESOURCES; }
+    if (Total != 0) CopyMem (NewBuffer, Buffer, Total);
+    CopyMem (NewBuffer + Total, Raw + Pos, Size);
+    if (Buffer != NULL) FreePool (Buffer);
+    Buffer = NewBuffer; Total += Size; Pos += Size;
+  }
+  if (Buffer != NULL) FreePool (Buffer);
+  return EFI_VOLUME_CORRUPTED;
+}
+
+STATIC EFI_STATUS SfbDecodeGif (IN CONST UINT8 *Raw, IN UINTN RawBytes,
+  IN UINT64 ElapsedMs, OUT EFI_IMAGE_OUTPUT **Out)
+{
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL Global[256], Local[256], *Canvas = NULL, *Saved = NULL;
+  UINTN Pos, Width, Height, GlobalCount = 0, Frame = 0, Timeline = 0, I;
+  UINTN PrevLeft = 0, PrevTop = 0, PrevWidth = 0, PrevHeight = 0;
+  UINT8 Disposal = 0, PrevDisposal = 0, Transparent = 0, TransparentIndex = 0;
+  UINTN PendingDelay = 100;
+  if (RawBytes < 13 || (CompareMem (Raw, "GIF87a", 6) != 0 &&
+                        CompareMem (Raw, "GIF89a", 6) != 0)) return EFI_UNSUPPORTED;
+  Width = Raw[6] | ((UINTN)Raw[7] << 8); Height = Raw[8] | ((UINTN)Raw[9] << 8);
+  if (Width == 0 || Height == 0 || Width > SFB_ASSET_MAX_DIM ||
+      Height > SFB_ASSET_MAX_DIM || Width > SFB_ASSET_MAX_PIXELS / Height)
+    return EFI_BAD_BUFFER_SIZE;
+  Pos = 13; ZeroMem (Global, sizeof (Global));
+  if ((Raw[10] & 0x80) != 0) {
+    GlobalCount = 1U << ((Raw[10] & 7) + 1);
+    if (Pos + GlobalCount * 3 > RawBytes) return EFI_VOLUME_CORRUPTED;
+    for (I = 0; I < GlobalCount; I++) {
+      Global[I].Red = Raw[Pos++]; Global[I].Green = Raw[Pos++];
+      Global[I].Blue = Raw[Pos++]; Global[I].Reserved = 255;
+    }
+  }
+  Canvas = AllocateZeroPool (Width * Height * sizeof (*Canvas));
+  Saved = AllocatePool (Width * Height * sizeof (*Saved));
+  if (Canvas == NULL || Saved == NULL) { if (Canvas) FreePool (Canvas); if (Saved) FreePool (Saved); return EFI_OUT_OF_RESOURCES; }
+  while (Pos < RawBytes) {
+    UINT8 Marker = Raw[Pos++];
+    if (Marker == 0x3b) break;
+    if (Marker == 0x21) {
+      UINT8 Label;
+      if (Pos >= RawBytes) goto Corrupt;
+      Label = Raw[Pos++];
+      if (Label == 0xf9) {
+        UINT8 Size, Packed;
+        if (Pos >= RawBytes || (Size = Raw[Pos++]) != 4 || Pos + 5 > RawBytes) goto Corrupt;
+        Packed = Raw[Pos]; Disposal = (Packed >> 2) & 7; Transparent = Packed & 1;
+        PendingDelay = (Raw[Pos + 1] | ((UINTN)Raw[Pos + 2] << 8)) * 10;
+        if (PendingDelay == 0) PendingDelay = 100;
+        TransparentIndex = Raw[Pos + 3]; Pos += 4;
+        if (Raw[Pos++] != 0) goto Corrupt;
+      } else {
+        UINT8 *Ignored = NULL; UINTN IgnoredBytes = 0;
+        if (EFI_ERROR (SfbGifSubBlocks (Raw, RawBytes, &Pos, &Ignored, &IgnoredBytes))) goto Corrupt;
+        if (Ignored != NULL) FreePool (Ignored);
+      }
+      continue;
+    }
+    if (Marker == 0x2c) {
+      UINTN Left, Top, FrameWidth, FrameHeight, PaletteCount = GlobalCount;
+      UINTN X, Y, SourceY, Delay = PendingDelay;
+      UINT8 Packed, MinimumCode, *Compressed = NULL, *Indexes = NULL;
+      UINTN CompressedBytes = 0;
+      EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Palette = Global;
+      if (Pos + 9 > RawBytes) goto Corrupt;
+      Left = Raw[Pos] | ((UINTN)Raw[Pos+1] << 8); Top = Raw[Pos+2] | ((UINTN)Raw[Pos+3] << 8);
+      FrameWidth = Raw[Pos+4] | ((UINTN)Raw[Pos+5] << 8); FrameHeight = Raw[Pos+6] | ((UINTN)Raw[Pos+7] << 8);
+      Packed = Raw[Pos+8]; Pos += 9;
+      if (FrameWidth == 0 || FrameHeight == 0 || Left + FrameWidth > Width || Top + FrameHeight > Height) goto Corrupt;
+      if (PrevDisposal == 2) {
+        for (Y = 0; Y < PrevHeight; Y++) ZeroMem (Canvas + (PrevTop + Y) * Width + PrevLeft,
+                                                  PrevWidth * sizeof (*Canvas));
+      } else if (PrevDisposal == 3) CopyMem (Canvas, Saved, Width * Height * sizeof (*Canvas));
+      if (Disposal == 3) CopyMem (Saved, Canvas, Width * Height * sizeof (*Canvas));
+      if ((Packed & 0x80) != 0) {
+        PaletteCount = 1U << ((Packed & 7) + 1); Palette = Local; ZeroMem (Local, sizeof (Local));
+        if (Pos + PaletteCount * 3 > RawBytes) goto Corrupt;
+        for (I = 0; I < PaletteCount; I++) { Local[I].Red=Raw[Pos++]; Local[I].Green=Raw[Pos++]; Local[I].Blue=Raw[Pos++]; Local[I].Reserved=255; }
+      }
+      if (PaletteCount == 0 || Pos >= RawBytes) goto Corrupt;
+      MinimumCode = Raw[Pos++];
+      if (EFI_ERROR (SfbGifSubBlocks (Raw, RawBytes, &Pos, &Compressed, &CompressedBytes))) goto Corrupt;
+      Indexes = AllocatePool (FrameWidth * FrameHeight);
+      if (Indexes == NULL) { if (Compressed) FreePool (Compressed); goto NoMemory; }
+      if (EFI_ERROR (SfbGifLzw (Compressed, CompressedBytes, MinimumCode, Indexes,
+                               FrameWidth * FrameHeight))) { FreePool (Compressed); FreePool (Indexes); goto Corrupt; }
+      FreePool (Compressed);
+      for (Y = 0; Y < FrameHeight; Y++) {
+        if ((Packed & 0x40) == 0) SourceY = Y;
+        else {
+          STATIC CONST UINT8 Starts[4] = {0,4,2,1}, Steps[4] = {8,8,4,2};
+          UINTN Pass, Row = 0, Count;
+          SourceY = 0;
+          for (Pass = 0; Pass < 4; Pass++) {
+            Count = (FrameHeight > Starts[Pass]) ? (FrameHeight - Starts[Pass] + Steps[Pass] - 1) / Steps[Pass] : 0;
+            if (Y < Row + Count) { SourceY = Starts[Pass] + (Y - Row) * Steps[Pass]; break; }
+            Row += Count;
+          }
+        }
+        for (X = 0; X < FrameWidth; X++) {
+          UINT8 Index = Indexes[Y * FrameWidth + X];
+          if (Index < PaletteCount && !(Transparent && Index == TransparentIndex))
+            Canvas[(Top + SourceY) * Width + Left + X] = Palette[Index];
+        }
+      }
+      FreePool (Indexes);
+      Frame++;
+      if ((Pos >= RawBytes || Raw[Pos] == 0x3b) &&
+          ElapsedMs >= Timeline + Delay && Timeline + Delay != 0) {
+        UINT64 Wrapped = ElapsedMs % (Timeline + Delay);
+        FreePool (Canvas); FreePool (Saved);
+        return SfbDecodeGif (Raw, RawBytes, Wrapped, Out);
+      }
+      if (ElapsedMs < Timeline + Delay || Pos >= RawBytes || Raw[Pos] == 0x3b) {
+        *Out = AllocateZeroPool (sizeof (EFI_IMAGE_OUTPUT));
+        if (*Out == NULL) goto NoMemory;
+        (*Out)->Width = (UINT16)Width; (*Out)->Height = (UINT16)Height;
+        (*Out)->Image.Bitmap = AllocatePool (Width * Height * sizeof (*Canvas));
+        if ((*Out)->Image.Bitmap == NULL) { FreePool (*Out); *Out = NULL; goto NoMemory; }
+        CopyMem ((*Out)->Image.Bitmap, Canvas, Width * Height * sizeof (*Canvas));
+        FreePool (Canvas); FreePool (Saved); return EFI_SUCCESS;
+      }
+      Timeline += Delay; PrevDisposal = Disposal; PrevLeft = Left; PrevTop = Top;
+      PrevWidth = FrameWidth; PrevHeight = FrameHeight;
+      Disposal = 0; Transparent = 0; PendingDelay = 100;
+      continue;
+    }
+    goto Corrupt;
+  }
+Corrupt:
+  FreePool (Canvas); FreePool (Saved); return Frame == 0 ? EFI_VOLUME_CORRUPTED : EFI_NOT_FOUND;
+NoMemory:
+  FreePool (Canvas); FreePool (Saved); return EFI_OUT_OF_RESOURCES;
 }
 
 STATIC VOID SfbAsciiToUnicode (IN CONST CHAR8 *In, OUT CHAR16 *Out, IN UINTN Max)
@@ -155,7 +370,7 @@ STATIC EFI_STATUS SfbReadAsset (IN CONST CHAR8 *WantLabel,
 }
 
 EFI_STATUS SfbDrawLaunchAsset (IN CONST CHAR8 *VolumeLabel, IN CONST CHAR8 *Path,
-  IN UINTN Position, IN EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop,
+  IN UINTN Position, IN UINTN Stage, IN EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop,
   IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Background)
 {
   VOID *Raw = NULL;
@@ -166,18 +381,37 @@ EFI_STATUS SfbDrawLaunchAsset (IN CONST CHAR8 *VolumeLabel, IN CONST CHAR8 *Path
   EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Scaled = NULL;
   EFI_STATUS Status;
   if (Path == NULL || Path[0] == '\0' || Gop == NULL) return EFI_NOT_FOUND;
-  Status = SfbReadAsset (VolumeLabel, Path, &Raw, &RawBytes);
-  if (EFI_ERROR (Status)) return Status;
-  Status = SfbDecodePng ((CONST UINT8 *)Raw, RawBytes, &Image);
+  if (Stage == 0) {
+    if (mSfbAssetRaw != NULL) FreePool (mSfbAssetRaw);
+    mSfbAssetRaw = NULL; mSfbAssetRawBytes = 0; mSfbAssetKind = 0;
+    Status = SfbReadAsset (VolumeLabel, Path, &mSfbAssetRaw, &mSfbAssetRawBytes);
+    if (EFI_ERROR (Status)) return Status;
+    if (mSfbAssetRawBytes >= 8 && CompareMem (mSfbAssetRaw, "\x89PNG\r\n\x1a\n", 8) == 0) mSfbAssetKind = 1;
+    else if (mSfbAssetRawBytes >= 6 &&
+             (CompareMem (mSfbAssetRaw, "GIF87a", 6) == 0 ||
+              CompareMem (mSfbAssetRaw, "GIF89a", 6) == 0)) mSfbAssetKind = 2;
+    else mSfbAssetKind = 3;
+    mSfbAssetStarted = GetPerformanceCounter ();
+  } else if (mSfbAssetRaw == NULL) return EFI_NOT_FOUND;
+  Raw = mSfbAssetRaw; RawBytes = mSfbAssetRawBytes;
+  if (mSfbAssetKind != 2 && Stage != 0) {
+    if (Stage >= 3) { FreePool (mSfbAssetRaw); mSfbAssetRaw = NULL; mSfbAssetRawBytes = 0; }
+    return EFI_SUCCESS;
+  }
+  if (mSfbAssetKind == 2)
+    Status = SfbDecodeGif ((CONST UINT8 *)Raw, RawBytes,
+      GetTimeInNanoSecond (GetPerformanceCounter () - mSfbAssetStarted) / 1000000, &Image);
+  else
+    Status = SfbDecodePng ((CONST UINT8 *)Raw, RawBytes, &Image);
   if (!EFI_ERROR (Status) && Image != NULL) {
-    FreePool (Raw);
     Handles = NULL;
     HandleCount = 0;
     goto Decoded;
   }
+  if (mSfbAssetKind == 2) return Status;
   Status = gBS->LocateHandleBuffer (ByProtocol, &gEfiHiiImageDecoderProtocolGuid,
                                     NULL, &HandleCount, &Handles);
-  if (EFI_ERROR (Status) || Handles == NULL) { FreePool (Raw); return EFI_UNSUPPORTED; }
+  if (EFI_ERROR (Status) || Handles == NULL) return EFI_UNSUPPORTED;
   Status = EFI_UNSUPPORTED;
   for (Index = 0; Index < HandleCount; Index++) {
     EFI_HII_IMAGE_DECODER_PROTOCOL *Decoder = NULL;
@@ -188,7 +422,7 @@ EFI_STATUS SfbDrawLaunchAsset (IN CONST CHAR8 *VolumeLabel, IN CONST CHAR8 *Path
       if (!EFI_ERROR (Status) && Image != NULL) break;
     }
   }
-  FreePool (Handles); FreePool (Raw);
+  FreePool (Handles);
 Decoded:
   if (EFI_ERROR (Status) || Image == NULL || Image->Image.Bitmap == NULL ||
       Image->Width == 0 || Image->Height == 0 ||
@@ -224,7 +458,7 @@ Decoded:
       D->Blue = SFB_BILERP (Blue); D->Green = SFB_BILERP (Green);
       D->Red = SFB_BILERP (Red); D->Reserved = SFB_BILERP (Reserved);
 #undef SFB_BILERP
-      if (Background != NULL && D->Reserved != 0 && D->Reserved != 255) {
+      if (Background != NULL && D->Reserved != 255) {
         UINTN A = D->Reserved;
         D->Blue = (UINT8)((D->Blue * A + Background->Blue * (255-A) + 127) / 255);
         D->Green = (UINT8)((D->Green * A + Background->Green * (255-A) + 127) / 255);
@@ -239,5 +473,8 @@ Decoded:
   Status = Gop->Blt (Gop, Scaled, EfiBltBufferToVideo, 0, 0, X, Y,
                      DrawW, DrawH, DrawW * sizeof (*Scaled));
   FreePool (Scaled); FreePool (Image->Image.Bitmap); FreePool (Image);
+  if (Stage >= 3 && mSfbAssetRaw != NULL) {
+    FreePool (mSfbAssetRaw); mSfbAssetRaw = NULL; mSfbAssetRawBytes = 0;
+  }
   return Status;
 }

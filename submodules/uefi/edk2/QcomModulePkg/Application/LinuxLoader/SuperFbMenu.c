@@ -1485,15 +1485,13 @@ SfbUpdateBootingStage (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen,
     UINTN Progress = MIN (Stage, (UINTN)3);
     if (Stage == 0) {
       CustomAssetActive = FALSE;
-      if (mSfbBootVisual == 2 &&
-          !EFI_ERROR (SfbDrawLaunchAsset (mSfbBootAssetLabel,
-                                          mSfbBootAssetPath,
-                                          mSfbBootPosition, mSfbGop,
-                                          &mSfbColorBackground))) {
-        CustomAssetActive = TRUE;
-        return;
-      }
-    } else if (CustomAssetActive) {
+    }
+    if (mSfbBootVisual == 2 && (Stage == 0 || CustomAssetActive) &&
+        !EFI_ERROR (SfbDrawLaunchAsset (mSfbBootAssetLabel,
+                                        mSfbBootAssetPath,
+                                        mSfbBootPosition, Stage, mSfbGop,
+                                        &mSfbColorBackground))) {
+      CustomAssetActive = TRUE;
       return;
     }
     if (mSfbBootPosition == 0) CardY = mSfbSafeTop + CANOE_UI_HEADER_HEIGHT + 70;
@@ -1927,6 +1925,9 @@ SfbSettingsDescription (IN UINTN Cursor)
                      : (mSfbLockMode == SFB_LOCK_PIN
                           ? L"重新设置用于进入启动菜单的四位 PIN。"
                           : L"返回启动菜单。");
+    case 7: return (mSfbBootVisual == 2 && mSfbLockMode == SFB_LOCK_PIN)
+                     ? L"重新设置用于进入启动菜单的四位 PIN。"
+                     : L"返回启动菜单。";
     default: return L"返回启动菜单。";
     }
   }
@@ -1942,6 +1943,9 @@ SfbSettingsDescription (IN UINTN Cursor)
                    : (mSfbLockMode == SFB_LOCK_PIN
                         ? L"Change the four-digit PIN used to enter the boot menu."
                         : L"Return to the boot menu.");
+  case 7: return (mSfbBootVisual == 2 && mSfbLockMode == SFB_LOCK_PIN)
+                   ? L"Change the four-digit PIN used to enter the boot menu."
+                   : L"Return to the boot menu.";
   default: return L"Return to the boot menu.";
   }
 }
