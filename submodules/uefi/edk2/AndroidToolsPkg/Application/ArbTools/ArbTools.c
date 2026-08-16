@@ -131,6 +131,7 @@ AtShowArbValues (
   if (CompareMem (Info.magic, DEVICE_MAGIC, DEVICE_MAGIC_SIZE) != 0) {
     AtUiShowMessage (L"DeviceInfo not initialized");
     AtUiWaitForKey (0);
+    AtUiDebounce ();
     return;
   }
 
@@ -153,13 +154,16 @@ AtShowArbValues (
       goto Out;
     }
     UnicodeSPrint (Lines[Used], 40 * sizeof (CHAR16),
-                   L"Slot %2u: 0x%016lx", (UINT32)Index, Val);
+                   AtUiIsChinese () ? L"槽位 %2u：0x%016lx"
+                                     : L"Slot %2u: 0x%016lx",
+                   (UINT32)Index, Val);
     Used++;
   }
 
   if (Used == 0) {
     AtUiShowMessage (L"All rollback slots are 0");
     AtUiWaitForKey (0);
+    AtUiDebounce ();
     goto Out;
   }
 
@@ -197,6 +201,7 @@ AtConfirmReset5x (
 {
   UINTN  Step;
   AT_KEY Key;
+  CHAR16 Progress[48];
 
   for (Step = 1; Step <= 5; Step++) {
     /* Enforce >=1s since the previous confirmation and drop any key held over
@@ -205,9 +210,16 @@ AtConfirmReset5x (
     gST->ConIn->Reset (gST->ConIn, FALSE);
 
     AtUiBeginScreen (L"Reset ARB Index", NULL);
-    Print (L"WARNING: this writes to the TEE and may lose keys.\r\n");
-    Print (L"\r\n   Confirm %u/5\r\n", (UINT32)Step);
-    Print (L"\r\nPower = confirm   Vol+/- = cancel\r\n");
+    AtUiWriteLine (AtUiIsChinese ()
+                   ? L"警告：此操作会写入 TEE，可能造成密钥丢失。"
+                   : L"WARNING: this writes to the TEE and may lose keys.");
+    UnicodeSPrint (Progress, sizeof (Progress),
+                   AtUiIsChinese () ? L"确认进度 %u / 5" : L"Confirm %u / 5",
+                   (UINT32)Step);
+    AtUiWriteLine (Progress);
+    AtUiEndScreen (AtUiIsChinese ()
+                   ? L"电源键确认，音量键取消"
+                   : L"Power confirm, volume cancel");
 
     Key = AtUiWaitForKey (0);
     if (Key != AtKeySelect) {
@@ -215,6 +227,7 @@ AtConfirmReset5x (
       gBS->Stall (1000000);
       return FALSE;
     }
+    AtUiDebounce ();
   }
 
   /* Final 1s interval before the destructive write begins. */
@@ -265,6 +278,7 @@ AtResetArbValues (
 
   AtUiShowMessage (L"ARB index reset complete");
   AtUiWaitForKey (0);
+  AtUiDebounce ();
 }
 
 /* ---- entry point -------------------------------------------------------- */
@@ -283,6 +297,8 @@ ArbToolsEntry (
   };
   UINTN      Sel;
   EFI_STATUS Status;
+
+  AtUiInitialize (ImageHandle);
 
   /*
    * The power press that selected us in the super-fastboot menu is often still

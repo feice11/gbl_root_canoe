@@ -383,6 +383,13 @@ SfbDrawRow (IN BOOLEAN      Selected,
 CONST CHAR16 *
 SfbLocalize (IN CONST CHAR16 *Text);
 
+/* Current visual preferences, loaded from the shared settings record. */
+UINTN
+SfbUiLanguage (VOID);
+
+UINTN
+SfbUiTheme (VOID);
+
 /* First row of the visible window, chosen to keep Cursor inside it. */
 UINTN
 SfbWindowStart (IN UINTN Cursor, IN UINTN Count, IN UINTN Rows);

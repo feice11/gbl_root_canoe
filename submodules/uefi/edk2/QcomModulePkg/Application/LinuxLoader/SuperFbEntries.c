@@ -19,6 +19,7 @@
 #include <Library/PrintLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
+#include <Protocol/LoadedImage.h>
 #include <Protocol/Security.h>
 #include <Protocol/Security2.h>
 
@@ -497,6 +498,30 @@ SfbParseBootEntryLine (IN CONST CHAR8 *Line,
   Name[Count] = L'\0';
   if (Count == 0) {
     return FALSE;
+  }
+
+  /* Names beginning with '@' are project-owned semantic labels.  Unlike a
+   * text-matching translation pass, this keeps arbitrary user entry names
+   * untouched while allowing the shipped ENTRIES files to follow the current
+   * BootMenu language. */
+  if (Name[0] == L'@') {
+    CONST CHAR16  *Localized = NULL;
+    BOOLEAN       Chinese = (BOOLEAN)(SfbUiLanguage () == 0);
+
+    if (StrCmp (Name, L"@AndroidTools") == 0) {
+      Localized = Chinese ? L"安卓工具" : L"Android Tools";
+    } else if (StrCmp (Name, L"@RebootTools") == 0) {
+      Localized = Chinese ? L"重启工具" : L"Reboot Tools";
+    } else if (StrCmp (Name, L"@BLTools") == 0) {
+      Localized = Chinese ? L"BL 状态工具" : L"BL Tools";
+    } else if (StrCmp (Name, L"@ARBTools") == 0) {
+      Localized = Chinese ? L"ARB 工具" : L"ARB Tools";
+    } else if (StrCmp (Name, L"@MiniGames") == 0) {
+      Localized = Chinese ? L"小游戏" : L"Mini Games";
+    }
+    if (Localized != NULL) {
+      StrnCpyS (Name, NameChars, Localized, NameChars - 1);
+    }
   }
 
   return SfbAsciiRelPathToUnicode (Colon + 1, Path, PathChars);
@@ -1052,6 +1077,8 @@ SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
   EFI_HANDLE  ImageHandle = NULL;
   CHAR16      *ExitData = NULL;
   UINTN       ExitDataSize = 0;
+  EFI_LOADED_IMAGE_PROTOCOL  *LoadedImage = NULL;
+  CHAR16      UiOptions[32];
 
   if (Entry->Kind != SfbEntryEfiFile || Entry->DevicePath == NULL) {
     return EFI_INVALID_PARAMETER;
@@ -1089,6 +1116,24 @@ SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
     DEBUG ((EFI_D_ERROR, "SFB: LoadImage '%s' failed: %r\n",
             Entry->Path, Status));
     return Status;
+  }
+
+  /* AndroidToolsUi consumes this compact option record. Restrict it to the
+   * shipped tools: third-party EFI applications may assign their own meaning
+   * to LoadOptions and must remain completely untouched. */
+  if ((StrStr (Entry->Path, L"\\tools\\RebootTools.efi") != NULL ||
+       StrStr (Entry->Path, L"\\tools\\ArbTools.efi") != NULL ||
+       StrStr (Entry->Path, L"\\tools\\BLTools.efi") != NULL ||
+       StrStr (Entry->Path, L"\\tools\\MiniGames.efi") != NULL) &&
+      !EFI_ERROR (gBS->HandleProtocol (ImageHandle,
+                                       &gEfiLoadedImageProtocolGuid,
+                                       (VOID **)&LoadedImage)) &&
+      LoadedImage != NULL) {
+    UnicodeSPrint (UiOptions, sizeof (UiOptions), L"CUI1|%u|%u",
+                   (UINT32)SfbUiLanguage (), (UINT32)SfbUiTheme ());
+    LoadedImage->LoadOptions = UiOptions;
+    LoadedImage->LoadOptionsSize = (UINT32)((StrLen (UiOptions) + 1) *
+                                             sizeof (CHAR16));
   }
 
   Status = gBS->StartImage (ImageHandle, &ExitDataSize, &ExitData);

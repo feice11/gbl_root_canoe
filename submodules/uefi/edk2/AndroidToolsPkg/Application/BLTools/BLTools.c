@@ -116,8 +116,10 @@ BlConfirm (
   gST->ConIn->Reset (gST->ConIn, FALSE);
 
   AtUiBeginScreen (Title, NULL);
-  Print (L"%s\r\n", (Warning != NULL) ? Warning : L"");
-  Print (L"\r\nPower = confirm   Vol+/- = cancel\r\n");
+  AtUiWriteLine ((Warning != NULL) ? Warning : L"");
+  AtUiEndScreen (AtUiIsChinese ()
+                 ? L"电源键确认，音量键取消"
+                 : L"Power confirm, volume cancel");
 
   Key = AtUiWaitForKey (0);
   if (Key != AtKeySelect) {
@@ -125,6 +127,7 @@ BlConfirm (
     gBS->Stall (1000000);
     return FALSE;
   }
+  AtUiDebounce ();
   return TRUE;
 }
 
@@ -161,12 +164,15 @@ BlApply (
       NewCritical == Info->is_unlock_critical) {
     AtUiShowMessage (L"State unchanged");
     AtUiWaitForKey (0);
+    AtUiDebounce ();
     return;
   }
 
   UnicodeSPrint (Warning, sizeof (Warning),
-                 L"%s - writes DeviceInfo. May cause data loss.",
-                 Action);
+                 AtUiIsChinese ()
+                 ? L"%s：将写入 DeviceInfo，可能造成数据丢失。"
+                 : L"%s - writes DeviceInfo. May cause data loss.",
+                 AtUiLocalize (Action));
   if (!BlConfirm (Action, Warning)) {
     return;
   }
@@ -189,6 +195,7 @@ BlApply (
 
   AtUiShowMessage (L"Done. Reboot for the change to take effect.");
   AtUiWaitForKey (0);
+  AtUiDebounce ();
 }
 
 /* ---- toggles ------------------------------------------------------------ */
@@ -252,6 +259,8 @@ BlToolsEntry (
   CHAR16       LabelCritical[20];
   CONST CHAR16 *Items[3];
 
+  AtUiInitialize (ImageHandle);
+
   /*
    * The power press that selected us in the super-fastboot menu is often still
    * held when we start; AtUiEnterMenu waits for it to release and drains the
@@ -270,19 +279,26 @@ BlToolsEntry (
   if (CompareMem (Info.magic, DEVICE_MAGIC, DEVICE_MAGIC_SIZE) != 0) {
     AtUiShowMessage (L"DeviceInfo not initialized");
     AtUiWaitForKey (0);
+    AtUiDebounce ();
     return EFI_SUCCESS;
   }
 
   while (TRUE) {
     /* The live state rides in the title bar so the action labels never
      * contradict what is actually persisted. */
-    UnicodeSPrint (Title, sizeof (Title), L"BL Tools  Unlock:%s  Crit:%s",
-                   Info.is_unlocked ? L"on" : L"off",
-                   Info.is_unlock_critical ? L"on" : L"off");
+    UnicodeSPrint (Title, sizeof (Title),
+                   AtUiIsChinese () ? L"BL 状态  解锁:%s  关键:%s"
+                                     : L"BL Tools  Unlock:%s  Crit:%s",
+                   Info.is_unlocked ? (AtUiIsChinese () ? L"开" : L"on")
+                                    : (AtUiIsChinese () ? L"关" : L"off"),
+                   Info.is_unlock_critical ? (AtUiIsChinese () ? L"开" : L"on")
+                                             : (AtUiIsChinese () ? L"关" : L"off"));
     UnicodeSPrint (LabelUnlock, sizeof (LabelUnlock),
-                   Info.is_unlocked ? L"Lock Device" : L"Unlock Device");
+                   L"%s", AtUiLocalize (Info.is_unlocked
+                                        ? L"Lock Device" : L"Unlock Device"));
     UnicodeSPrint (LabelCritical, sizeof (LabelCritical),
-                   Info.is_unlock_critical ? L"Lock Critical" : L"Unlock Critical");
+                   L"%s", AtUiLocalize (Info.is_unlock_critical
+                                        ? L"Lock Critical" : L"Unlock Critical"));
 
     Items[0] = LabelUnlock;
     Items[1] = LabelCritical;

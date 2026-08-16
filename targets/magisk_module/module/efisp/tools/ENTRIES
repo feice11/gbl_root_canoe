@@ -1,3 +1,4 @@
-$Reboot Tools:tools\RebootTools.efi
-$BL Tools:tools\BLTools.efi
-$ARB Tools:tools\ArbTools.efi
+$@RebootTools:tools\RebootTools.efi
+$@BLTools:tools\BLTools.efi
+$@ARBTools:tools\ArbTools.efi
+$@MiniGames:tools\MiniGames.efi

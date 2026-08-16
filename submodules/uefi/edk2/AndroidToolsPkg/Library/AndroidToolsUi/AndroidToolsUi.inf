@@ -30,4 +30,6 @@
   UefiLib
 
 [Protocols]
+  gEfiGraphicsOutputProtocolGuid
+  gEfiLoadedImageProtocolGuid
   gEfiSimpleTextInProtocolGuid

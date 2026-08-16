@@ -16,6 +16,18 @@ STRIDE = 24  # two 4-bit alpha pixels per byte
 ASCII = "".join(chr(i) for i in range(32, 127))
 CJK = "启动菜单安卓工具进入程序选择器关机重新返回操作失败完成正在电源项控制模式重引导锁防回滚个表示默认音量移动键确认设置配色主题蓝紫绿橙简易密码关闭保存已更改输入错误重试数字位当前下一页退出解锁：不第定度方请顺行按备到的读法访服该和候加件禁就卷开览临浏录目内驱取稍时是所添未文问无务绪言要应用语载找中准足"
 CJK += "初打管后化继接理连脑使始态续状"
+UI_SOURCES = [
+    ROOT / "submodules/uefi/edk2/QcomModulePkg/Application/LinuxLoader/SuperFbMenu.c",
+    ROOT / "submodules/uefi/edk2/QcomModulePkg/Application/LinuxLoader/SuperFbEntries.c",
+    ROOT / "submodules/uefi/edk2/AndroidToolsPkg/Library/AndroidToolsUi/AndroidToolsUi.c",
+    ROOT / "submodules/uefi/edk2/AndroidToolsPkg/Application/ArbTools/ArbTools.c",
+    ROOT / "submodules/uefi/edk2/AndroidToolsPkg/Application/BLTools/BLTools.c",
+    ROOT / "submodules/uefi/edk2/AndroidToolsPkg/Application/MiniGames/MiniGames.c",
+]
+for source in UI_SOURCES:
+    if source.exists():
+        CJK += "".join(ch for ch in source.read_text(encoding="utf-8")
+                       if ord(ch) >= 128)
 CHARS = ASCII + "".join(dict.fromkeys(CJK))
 
 

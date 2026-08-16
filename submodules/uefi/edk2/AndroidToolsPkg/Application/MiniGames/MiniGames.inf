@@ -1,0 +1,27 @@
+#/** @file
+#  Two small, three-button UEFI games.
+#**/
+[Defines]
+  INF_VERSION                    = 0x00010006
+  BASE_NAME                      = MiniGames
+  FILE_GUID                      = 2D8B4A71-7C35-49E6-A910-83F2C64D5B0E
+  MODULE_TYPE                    = UEFI_APPLICATION
+  VERSION_STRING                 = 0.1
+  ENTRY_POINT                    = MiniGamesEntry
+
+[Sources]
+  MiniGames.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  AndroidToolsPkg/AndroidToolsPkg.dec
+
+[LibraryClasses]
+  AndroidToolsUi
+  BaseLib
+  BaseMemoryLib
+  PrintLib
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
+  UefiLib

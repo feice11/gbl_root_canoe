@@ -161,6 +161,20 @@ SfbSaveSettings (VOID)
   return SfbStoreWrite (SFB_STORE_SETTINGS, Record);
 }
 
+UINTN
+SfbUiLanguage (VOID)
+{
+  SfbLoadSettings ();
+  return mSfbLanguage;
+}
+
+UINTN
+SfbUiTheme (VOID)
+{
+  SfbLoadSettings ();
+  return mSfbTheme;
+}
+
 CONST CHAR16 *
 SfbLocalize (IN CONST CHAR16 *Text)
 {

@@ -141,6 +141,8 @@ RebootToolsEntry (
   UINTN      Sel;
   EFI_STATUS Status;
 
+  AtUiInitialize (ImageHandle);
+
   /*
    * The power press that selected us in the super-fastboot menu is often still
    * held when we start; drain it (after a release delay) so it cannot confirm

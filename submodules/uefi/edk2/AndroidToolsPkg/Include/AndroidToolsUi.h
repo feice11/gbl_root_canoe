@@ -22,6 +22,20 @@ typedef enum {
 /* Rows of list content a screen shows before it starts scrolling. */
 #define AT_VISIBLE_ROWS  12
 
+/** Initialize graphics, language and palette inherited from BootMenu. */
+VOID
+AtUiInitialize (
+  IN EFI_HANDLE ImageHandle
+  );
+
+BOOLEAN
+AtUiIsChinese (VOID);
+
+CONST CHAR16 *
+AtUiLocalize (
+  IN CONST CHAR16 *Text
+  );
+
 /**
   Announce the menu and wait for the launching key to be released, then drain
   the input queue. Call once at application entry, before the first AtUiRunMenu,
@@ -42,6 +56,10 @@ AtUiWaitForKey (
   IN UINT32 TimeoutMs
   );
 
+/** Drain repeats until the key stream has remained quiet. */
+VOID
+AtUiDebounce (VOID);
+
 /** Clear the screen and print a title (and optional subtitle). **/
 VOID
 AtUiBeginScreen (
@@ -60,6 +78,12 @@ VOID
 AtUiDrawRow (
   IN BOOLEAN       Selected,
   IN CONST CHAR16 *Marker,
+  IN CONST CHAR16 *Text
+  );
+
+/** Draw one normal content line using the shared graphical font. */
+VOID
+AtUiWriteLine (
   IN CONST CHAR16 *Text
   );
 
