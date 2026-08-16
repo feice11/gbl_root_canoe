@@ -88,8 +88,9 @@ SfbCreateDriverHandle (OUT EFI_HANDLE *Handle)
  * PCI-emulation shim, XhciDxe, UsbBusDxe and UsbMassStorageDxe, but nothing in
  * the fastboot path ever connects them, so an attached USB drive never appears.
  */
+STATIC
 VOID
-SfbConnectAll (VOID)
+SfbConnectControllers (IN BOOLEAN Recursive)
 {
   EFI_STATUS  Status;
   EFI_HANDLE  *Handles = NULL;
@@ -104,7 +105,7 @@ SfbConnectAll (VOID)
   }
 
   for (Index = 0; Index < Count; Index++) {
-    Status = gBS->ConnectController (Handles[Index], NULL, NULL, TRUE);
+    Status = gBS->ConnectController (Handles[Index], NULL, NULL, Recursive);
     if (!EFI_ERROR (Status)) {
       Connected++;
     }
@@ -114,6 +115,21 @@ SfbConnectAll (VOID)
           (UINT32)Connected, (UINT32)Count));
 
   FreePool (Handles);
+}
+
+VOID
+SfbConnectAll (VOID)
+{
+  SfbConnectControllers (TRUE);
+}
+
+VOID
+SfbConnectLoadedDrivers (VOID)
+{
+  /* Try the newly dispatched drivers against present controller handles, but
+   * do not recursively enumerate unrelated device trees. USB/FAT discovery
+   * still uses SfbConnectAll() explicitly when a full stack is required. */
+  SfbConnectControllers (FALSE);
 }
 
 EFI_STATUS
@@ -689,4 +705,3 @@ SfbGetVolumeLabel (IN EFI_FILE_PROTOCOL *Root,
 
   FreePool (Label);
 }
-

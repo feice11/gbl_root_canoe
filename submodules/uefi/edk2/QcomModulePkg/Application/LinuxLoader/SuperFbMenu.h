@@ -197,6 +197,9 @@ SfbIsEfiDriverFile (IN EFI_FILE_PROTOCOL *Root, IN CONST CHAR16 *Path);
 VOID
 SfbConnectAll (VOID);
 
+VOID
+SfbConnectLoadedDrivers (VOID);
+
 /*
  * Read an ANSI text file and return its first line as a Unicode string.
  * Out is left untouched when the file is missing or empty.

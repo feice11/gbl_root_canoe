@@ -346,7 +346,7 @@ SfbDriverActionMenu (IN EFI_HANDLE   Volume,
       /* Load: start the driver, then connect controllers so it binds. */
       Status = SfbLoadDriver (Volume, FullPath);
       if (!EFI_ERROR (Status)) {
-        SfbConnectAll ();
+        SfbConnectLoadedDrivers ();
       }
       SfbReportStatus (EFI_ERROR (Status) ? L"Driver load failed"
                                           : L"Driver loaded", Status);

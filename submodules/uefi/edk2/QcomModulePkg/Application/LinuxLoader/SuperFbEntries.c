@@ -1064,7 +1064,7 @@ SfbPreloadDrivers (IN EFI_HANDLE Volume, IN CONST CHAR16 *EntryPath)
   FreePool (Buffer);
 
   if (LoadedAny) {
-    SfbConnectAll ();
+    SfbConnectLoadedDrivers ();
   }
 }
 
