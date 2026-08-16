@@ -10,19 +10,21 @@ from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "submodules/uefi/edk2/QcomModulePkg/Application/LinuxLoader/SuperFbFont.h"
-FONT = Path(r"C:\Windows\Fonts\msyhbd.ttc")
+FONT = Path(r"C:\Windows\Fonts\msyh.ttc")
 HEIGHT = 48
-STRIDE = 6
+STRIDE = 24  # two 4-bit alpha pixels per byte
 ASCII = "".join(chr(i) for i in range(32, 127))
 CJK = "启动菜单安卓工具进入程序选择器关机重新返回操作失败完成正在电源项控制模式重引导锁防回滚个表示默认音量移动键确认"
 CHARS = ASCII + "".join(dict.fromkeys(CJK))
 
 
 def render(ch: str):
-    advance = 30 if ord(ch) < 128 else 48
+    font = ImageFont.truetype(str(FONT), 39)
+    probe = ImageDraw.Draw(Image.new("L", (1, 1), 0))
+    advance = (max(14, min(36, round(probe.textlength(ch, font=font)) + 4))
+               if ord(ch) < 128 else 48)
     image = Image.new("L", (48, HEIGHT), 0)
     draw = ImageDraw.Draw(image)
-    font = ImageFont.truetype(str(FONT), 39)
     box = draw.textbbox((0, 0), ch, font=font)
     width, height = box[2] - box[0], box[3] - box[1]
     x = (advance - width) // 2 - box[0]
@@ -32,12 +34,9 @@ def render(ch: str):
     packed = []
     for row in range(HEIGHT):
         for byte_x in range(STRIDE):
-            value = 0
-            for bit in range(8):
-                x_pos = byte_x * 8 + bit
-                if pixels[x_pos, row] >= 72:
-                    value |= 0x80 >> bit
-            packed.append(value)
+            left = min(15, (pixels[byte_x * 2, row] + 8) // 17)
+            right = min(15, (pixels[byte_x * 2 + 1, row] + 8) // 17)
+            packed.append((left << 4) | right)
     return advance, packed
 
 
@@ -48,7 +47,7 @@ lines = [
     "",
     "#define SFB_FONT_BITMAP_WIDTH  48",
     "#define SFB_FONT_HEIGHT        48",
-    "#define SFB_FONT_STRIDE        6",
+    "#define SFB_FONT_STRIDE        24",
     "#define SFB_FONT_BYTES         (SFB_FONT_STRIDE * SFB_FONT_HEIGHT)",
     "",
     "typedef struct {",

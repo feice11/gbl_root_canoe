@@ -47,6 +47,7 @@ STATIC UINTN  mSfbColumns = 79;
 STATIC BOOLEAN                       mSfbGraphical = FALSE;
 STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL  *mSfbGop = NULL;
 STATIC UINTN                         mSfbGfxY = 0;
+STATIC UINTN                         mSfbSafeTop = 0;
 
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorBackground = { 0x18, 0x12, 0x0d, 0x00 };
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorSurface    = { 0x2d, 0x25, 0x1d, 0x00 };
@@ -111,7 +112,9 @@ SfbGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size,
   UINTN                          Sx;
   UINTN                          Sy;
   UINTN                          Advance;
+  UINTN                          Alpha;
   UINTN                          GlyphIndex;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *Pixel;
 
   if (!mSfbGraphical || Text == NULL || Size == 0) {
     return EFI_UNSUPPORTED;
@@ -181,9 +184,16 @@ SfbGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size,
       Sy = Dy * SFB_FONT_HEIGHT / Size;
       for (Dx = 0; Dx < Advance && Cursor + Dx < Width; Dx++) {
         Sx = Dx * Glyph->Advance / Advance;
-        if ((Glyph->Bitmap[Sy * SFB_FONT_STRIDE + Sx / 8] &
-             (0x80 >> (Sx & 7))) != 0) {
-          Buffer[Dy * Width + Cursor + Dx] = *Color;
+        Alpha = Glyph->Bitmap[Sy * SFB_FONT_STRIDE + Sx / 2];
+        Alpha = ((Sx & 1) == 0) ? (Alpha >> 4) : (Alpha & 0x0F);
+        if (Alpha != 0) {
+          Pixel = &Buffer[Dy * Width + Cursor + Dx];
+          Pixel->Blue = (UINT8)((Color->Blue * Alpha +
+                                 Pixel->Blue * (15 - Alpha) + 7) / 15);
+          Pixel->Green = (UINT8)((Color->Green * Alpha +
+                                  Pixel->Green * (15 - Alpha) + 7) / 15);
+          Pixel->Red = (UINT8)((Color->Red * Alpha +
+                                Pixel->Red * (15 - Alpha) + 7) / 15);
         }
       }
     }
@@ -195,6 +205,43 @@ SfbGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size,
                          Width * sizeof (*Buffer));
   FreePool (Buffer);
   return Status;
+}
+
+/* SimpleTextIn reports repeats but does not reliably expose a key-up event on
+ * these handsets. After Power confirms an action, wait until the input stream
+ * has stayed quiet for a complete debounce window. This prevents one slightly
+ * long press from confirming a second item on the next screen. */
+STATIC
+VOID
+SfbWaitForSelectRelease (VOID)
+{
+  EFI_EVENT      TimerEvent;
+  EFI_EVENT      WaitList[2];
+  EFI_INPUT_KEY  Key;
+  EFI_STATUS     Status;
+  UINTN          EventIndex;
+
+  gBS->Stall (200 * 1000);
+  gST->ConIn->Reset (gST->ConIn, FALSE);
+  Status = gBS->CreateEvent (EVT_TIMER, TPL_CALLBACK, NULL, NULL, &TimerEvent);
+  if (EFI_ERROR (Status)) {
+    return;
+  }
+
+  WaitList[0] = gST->ConIn->WaitForKey;
+  WaitList[1] = TimerEvent;
+  while (TRUE) {
+    gBS->SetTimer (TimerEvent, TimerRelative, 220 * 10000);
+    Status = gBS->WaitForEvent (2, WaitList, &EventIndex);
+    if (EFI_ERROR (Status) || EventIndex == 1) {
+      break;
+    }
+    while (!EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, &Key))) {
+      /* Drain every repeat, then require another full quiet window. */
+    }
+  }
+  gBS->CloseEvent (TimerEvent);
+  gST->ConIn->Reset (gST->ConIn, FALSE);
 }
 
 STATIC
@@ -354,6 +401,7 @@ SfbWaitForKey (IN UINT32 TimeoutMs)
       DEBUG ((EFI_D_VERBOSE, "SFB: confirm key scan=0x%x char=0x%x\n",
               Key.ScanCode, Key.UnicodeChar));
       Result = SfbKeySelect;
+      SfbWaitForSelectRelease ();
     }
     break;
   }
@@ -376,19 +424,22 @@ SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
   SfbUiInitGraphics ();
   if (mSfbGraphical) {
     Width = mSfbGop->Mode->Info->HorizontalResolution;
+    mSfbSafeTop = MAX (192,
+                       mSfbGop->Mode->Info->VerticalResolution / 16);
     SfbGfxFill (0, 0, Width,
                 mSfbGop->Mode->Info->VerticalResolution,
                 &mSfbColorBackground);
-    SfbGfxFill (0, 0, Width, 168, &mSfbColorSurface);
-    SfbGfxFill (0, 164, Width, 4, &mSfbColorPrimary);
+    SfbGfxFill (0, mSfbSafeTop, Width, 168, &mSfbColorSurface);
+    SfbGfxFill (0, mSfbSafeTop + 164, Width, 4, &mSfbColorPrimary);
     UnicodeSPrint (Header, sizeof (Header), L"CANOE  /  %s",
                    SfbUiChinese (Title));
-    SfbGfxText (72, 36, 60, Header, &mSfbColorText);
+    SfbGfxText (72, mSfbSafeTop + 36, 60, Header, &mSfbColorText);
     if (Subtitle != NULL) {
-      SfbGfxText (72, 184, 32, SfbUiChinese (Subtitle), &mSfbColorMuted);
-      mSfbGfxY = 244;
+      SfbGfxText (72, mSfbSafeTop + 184, 32,
+                  SfbUiChinese (Subtitle), &mSfbColorMuted);
+      mSfbGfxY = mSfbSafeTop + 244;
     } else {
-      mSfbGfxY = 204;
+      mSfbGfxY = mSfbSafeTop + 204;
     }
     return;
   }
