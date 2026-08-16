@@ -516,8 +516,7 @@ SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
                 &mSfbColorBackground);
     SfbGfxFill (0, mSfbSafeTop, Width, 168, &mSfbColorSurface);
     SfbGfxFill (0, mSfbSafeTop + 164, Width, 4, &mSfbColorPrimary);
-    UnicodeSPrint (Header, sizeof (Header), L"CANOE  /  %s",
-                   SfbUiChinese (Title));
+    UnicodeSPrint (Header, sizeof (Header), L"%s", SfbUiChinese (Title));
     SfbGfxText (72, mSfbSafeTop + 36, 60, Header, &mSfbColorText);
     if (Subtitle != NULL) {
       SfbGfxText (72, mSfbSafeTop + 184, 32,
@@ -534,7 +533,7 @@ SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
   gST->ConOut->ClearScreen (gST->ConOut);
   gST->ConOut->EnableCursor (gST->ConOut, FALSE);
 
-  UnicodeSPrint (Header, sizeof (Header), L"  CANOE  /  %s", Title);
+  UnicodeSPrint (Header, sizeof (Header), L"  %s", Title);
   SfbUiFullRow (SFB_ATTR_TITLE, Header);
   SfbUiRule ();
   if (Subtitle != NULL) {
