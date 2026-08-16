@@ -402,7 +402,7 @@ SfbGfxCenteredText (IN UINTN Y, IN UINT16 Preferred, IN UINT16 Minimum,
 }
 
 STATIC
-VOID
+VOID __attribute__ ((unused))
 SfbGfxGradientText (IN UINTN Y, IN UINT16 Preferred, IN UINT16 Minimum,
                     IN CONST CHAR16 *Text)
 {
