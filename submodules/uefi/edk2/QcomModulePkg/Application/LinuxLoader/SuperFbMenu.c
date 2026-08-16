@@ -55,6 +55,82 @@ STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorPrimary    = { 0xe8, 0x79, 0x24, 0
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorText       = { 0xf4, 0xf4, 0xf4, 0x00 };
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorMuted      = { 0xb0, 0xa8, 0x9f, 0x00 };
 
+#define SFB_THEME_COUNT  4
+#define SFB_LOCK_OFF     0
+#define SFB_LOCK_SIMPLE  1
+#define SFB_LOCK_PIN     2
+
+typedef struct {
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Background;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Surface;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  Primary;
+} SFB_PALETTE;
+
+STATIC CONST SFB_PALETTE  mSfbPalettes[SFB_THEME_COUNT] = {
+  { { 0x18, 0x12, 0x0d, 0 }, { 0x2d, 0x25, 0x1d, 0 }, { 0xe8, 0x79, 0x24, 0 } },
+  { { 0x19, 0x10, 0x14, 0 }, { 0x32, 0x21, 0x2a, 0 }, { 0xff, 0x59, 0x9b, 0 } },
+  { { 0x13, 0x16, 0x0d, 0 }, { 0x26, 0x2c, 0x1d, 0 }, { 0x7b, 0xc7, 0x27, 0 } },
+  { { 0x10, 0x12, 0x18, 0 }, { 0x20, 0x26, 0x32, 0 }, { 0x3d, 0x8a, 0xff, 0 } }
+};
+
+STATIC UINTN    mSfbTheme = 0;
+STATIC UINTN    mSfbLockMode = SFB_LOCK_OFF;
+STATIC CHAR8    mSfbPin[5] = "1234";
+STATIC BOOLEAN  mSfbSettingsLoaded = FALSE;
+
+STATIC
+VOID
+SfbApplyPalette (VOID)
+{
+  mSfbColorBackground = mSfbPalettes[mSfbTheme].Background;
+  mSfbColorSurface = mSfbPalettes[mSfbTheme].Surface;
+  mSfbColorPrimary = mSfbPalettes[mSfbTheme].Primary;
+}
+
+STATIC
+VOID
+SfbLoadSettings (VOID)
+{
+  CHAR8  Record[SFB_STORE_SLOT_BYTES];
+  UINTN  Index;
+
+  if (mSfbSettingsLoaded) {
+    return;
+  }
+  mSfbSettingsLoaded = TRUE;
+
+  if (!EFI_ERROR (SfbStoreRead (SFB_STORE_SETTINGS, Record,
+                                sizeof (Record))) &&
+      AsciiStrnCmp (Record, "SFC1|", 5) == 0 &&
+      Record[5] >= '0' && Record[5] < '0' + SFB_THEME_COUNT &&
+      Record[6] == '|' &&
+      Record[7] >= '0' && Record[7] <= '2' &&
+      Record[8] == '|') {
+    mSfbTheme = Record[5] - '0';
+    mSfbLockMode = Record[7] - '0';
+    for (Index = 0; Index < 4; Index++) {
+      if (Record[9 + Index] < '0' || Record[9 + Index] > '9') {
+        mSfbLockMode = SFB_LOCK_OFF;
+        break;
+      }
+      mSfbPin[Index] = Record[9 + Index];
+    }
+    mSfbPin[4] = '\0';
+  }
+  SfbApplyPalette ();
+}
+
+STATIC
+EFI_STATUS
+SfbSaveSettings (VOID)
+{
+  CHAR8  Record[32];
+
+  AsciiSPrint (Record, sizeof (Record), "SFC1|%u|%u|%a",
+               (UINT32)mSfbTheme, (UINT32)mSfbLockMode, mSfbPin);
+  return SfbStoreWrite (SFB_STORE_SETTINGS, Record);
+}
+
 STATIC
 CONST CHAR16 *
 SfbUiChinese (IN CONST CHAR16 *Text)
@@ -82,6 +158,7 @@ SfbUiEntryText (IN SFB_ENTRY_KIND Kind, IN CONST CHAR16 *Text)
   switch (Kind) {
   case SfbEntryFastboot: return L"进入 Fastboot";
   case SfbEntrySelector: return L"选择 EFI 程序";
+  case SfbEntrySettings: return L"设置";
   case SfbEntryBack:     return L"返回";
   case SfbEntryPowerOff: return L"关机";
   case SfbEntryRestart:  return L"重新启动";
@@ -636,6 +713,185 @@ SfbShowEnteringMenu (VOID)
   gST->ConIn->Reset (gST->ConIn, FALSE);
 }
 
+STATIC
+CONST CHAR16 *
+SfbThemeName (VOID)
+{
+  switch (mSfbTheme) {
+  case 1: return L"紫色";
+  case 2: return L"绿色";
+  case 3: return L"橙色";
+  default: return L"蓝色";
+  }
+}
+
+STATIC
+CONST CHAR16 *
+SfbLockName (VOID)
+{
+  switch (mSfbLockMode) {
+  case SFB_LOCK_SIMPLE: return L"简易锁";
+  case SFB_LOCK_PIN:    return L"PIN 密码";
+  default:              return L"关闭";
+  }
+}
+
+/* Three physical keys are available. Volume changes the current digit and
+ * Power accepts it; after four digits the caller receives the result. */
+STATIC
+VOID
+SfbEditPin (IN BOOLEAN MaskPrevious, OUT CHAR8 Pin[5])
+{
+  UINTN    Position;
+  UINTN    Digit = 0;
+  SFB_KEY  Key;
+
+  for (Position = 0; Position < 4;) {
+    CHAR16  Display[32];
+    CHAR16  Progress[32];
+    UINTN   Index;
+
+    for (Index = 0; Index < 4; Index++) {
+      if (Index < Position && MaskPrevious) {
+        Display[Index * 2] = L'*';
+      } else if (Index < Position) {
+        Display[Index * 2] = (CHAR16)Pin[Index];
+      } else if (Index == Position) {
+        Display[Index * 2] = (CHAR16)(L'0' + Digit);
+      } else {
+        Display[Index * 2] = L'-';
+      }
+      Display[Index * 2 + 1] = L' ';
+    }
+    Display[7] = L'\0';
+    UnicodeSPrint (Progress, sizeof (Progress), L"当前第 %u 位",
+                   (UINT32)(Position + 1));
+    SfbBeginScreen (MaskPrevious ? L"输入 PIN" : L"设置 PIN",
+                    Progress);
+    SfbDrawRow (TRUE, L"PIN", Display);
+    SfbEndScreen (L"Next");
+
+    Key = SfbWaitForKey (0);
+    if (Key == SfbKeyUp) {
+      Digit = (Digit + 1) % 10;
+    } else if (Key == SfbKeyDown) {
+      Digit = (Digit + 9) % 10;
+    } else if (Key == SfbKeySelect) {
+      Pin[Position++] = (CHAR8)('0' + Digit);
+      Digit = 0;
+    }
+  }
+  Pin[4] = '\0';
+}
+
+STATIC
+VOID
+SfbUnlock (VOID)
+{
+  if (mSfbLockMode == SFB_LOCK_OFF) {
+    return;
+  }
+
+  if (mSfbLockMode == SFB_LOCK_SIMPLE) {
+    CONST SFB_KEY  Sequence[4] = {
+      SfbKeyUp, SfbKeyDown, SfbKeyUp, SfbKeySelect
+    };
+    UINTN  Position = 0;
+
+    while (Position < ARRAY_SIZE (Sequence)) {
+      CHAR16  Progress[32];
+      SFB_KEY Key;
+
+      UnicodeSPrint (Progress, sizeof (Progress), L"输入进度  %u / 4",
+                     (UINT32)Position);
+      SfbBeginScreen (L"简易锁", Progress);
+      SfbUiFullRow (SFB_ATTR_ACCENT, L"顺序：音量+  音量-  音量+  电源键");
+      SfbEndScreen (L"Unlock");
+      Key = SfbWaitForKey (0);
+      if (Key == Sequence[Position]) {
+        Position++;
+      } else {
+        Position = (Key == Sequence[0]) ? 1 : 0;
+      }
+    }
+    return;
+  }
+
+  while (TRUE) {
+    CHAR8  Attempt[5];
+
+    ZeroMem (Attempt, sizeof (Attempt));
+    SfbEditPin (TRUE, Attempt);
+    if (CompareMem (Attempt, mSfbPin, 4) == 0) {
+      return;
+    }
+    SfbBeginScreen (L"密码错误", L"请重试");
+    SfbUiFullRow (SFB_ATTR_ERROR, L"PIN 不正确");
+    SfbEndScreen (L"Retry");
+    SfbWaitForKey (0);
+  }
+}
+
+STATIC
+VOID
+SfbRunSettings (VOID)
+{
+  UINTN    Cursor = 0;
+  SFB_KEY  Key;
+
+  while (TRUE) {
+    CHAR16  Theme[48];
+    CHAR16  Lock[48];
+    UINTN   Count = (mSfbLockMode == SFB_LOCK_PIN) ? 4 : 3;
+
+    UnicodeSPrint (Theme, sizeof (Theme), L"配色主题    %s", SfbThemeName ());
+    UnicodeSPrint (Lock, sizeof (Lock), L"锁定方式    %s", SfbLockName ());
+    SfbBeginScreen (L"设置", L"选择一项进行更改");
+    SfbDrawRow ((BOOLEAN)(Cursor == 0), L"COLOR", Theme);
+    SfbDrawRow ((BOOLEAN)(Cursor == 1), L"LOCK", Lock);
+    if (mSfbLockMode == SFB_LOCK_PIN) {
+      SfbDrawRow ((BOOLEAN)(Cursor == 2), L"PIN", L"更改 PIN 密码");
+      SfbDrawRow ((BOOLEAN)(Cursor == 3), L"BACK", L"返回");
+    } else {
+      SfbDrawRow ((BOOLEAN)(Cursor == 2), L"BACK", L"返回");
+    }
+    SfbEndScreen (L"Select");
+
+    Key = SfbWaitForKey (0);
+    if (Key == SfbKeyUp || Key == SfbKeyDown) {
+      SfbMoveCursor (&Cursor, Count, Key);
+      continue;
+    }
+    if (Cursor == 0) {
+      mSfbTheme = (mSfbTheme + 1) % SFB_THEME_COUNT;
+      SfbApplyPalette ();
+      SfbSaveSettings ();
+    } else if (Cursor == 1) {
+      UINTN  NewMode = (mSfbLockMode + 1) % 3;
+
+      if (NewMode == SFB_LOCK_PIN) {
+        CHAR8  NewPin[5];
+
+        ZeroMem (NewPin, sizeof (NewPin));
+        SfbEditPin (FALSE, NewPin);
+        CopyMem (mSfbPin, NewPin, sizeof (mSfbPin));
+      }
+      mSfbLockMode = NewMode;
+      SfbSaveSettings ();
+      Cursor = 1;
+    } else if (mSfbLockMode == SFB_LOCK_PIN && Cursor == 2) {
+      CHAR8  NewPin[5];
+
+      ZeroMem (NewPin, sizeof (NewPin));
+      SfbEditPin (FALSE, NewPin);
+      CopyMem (mSfbPin, NewPin, sizeof (mSfbPin));
+      SfbSaveSettings ();
+    } else {
+      return;
+    }
+  }
+}
+
 /* ---- boot menu ---------------------------------------------------------- */
 
 STATIC
@@ -676,6 +932,7 @@ SfbDrawMenu (IN CONST SFB_MENU_STATE *Menu,
       case SfbEntrySubmenu:   Marker = L"MENU";  break;
       case SfbEntryFastboot:  Marker = L"USB";   break;
       case SfbEntrySelector:  Marker = L"FILES"; break;
+      case SfbEntrySettings:  Marker = L"SET";   break;
       case SfbEntryBack:      Marker = L"BACK";  break;
       case SfbEntryPowerOff:
       case SfbEntryRestart:   Marker = L"POWER"; break;
@@ -804,6 +1061,9 @@ SfbRunBootMenu (VOID)
   SFB_KEY         Key;
   EFI_STATUS      Status;
 
+  SfbLoadSettings ();
+  SfbUnlock ();
+
   ZeroMem (&Menu, sizeof (Menu));
   Menu.DefaultIndex = SFB_NO_INDEX;
 
@@ -842,6 +1102,11 @@ SfbRunBootMenu (VOID)
     case SfbEntrySelector:
       SfbRunFileBrowser ();
       /* The browser may have added a custom entry. */
+      Rebuild = TRUE;
+      break;
+
+    case SfbEntrySettings:
+      SfbRunSettings ();
       Rebuild = TRUE;
       break;
 

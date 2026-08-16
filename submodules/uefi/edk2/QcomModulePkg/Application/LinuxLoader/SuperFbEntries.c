@@ -792,6 +792,7 @@ SfbBuildMenu (OUT SFB_MENU_STATE *Menu)
 
   SfbAppendBuiltIn (Menu, SfbEntryFastboot, L"Enter Fastboot");
   SfbAppendBuiltIn (Menu, SfbEntrySelector, L"Enter EFI Program Selector");
+  SfbAppendBuiltIn (Menu, SfbEntrySettings, L"Settings");
   SfbAppendBuiltIn (Menu, SfbEntryPowerOff, L"Power Off");
   SfbAppendBuiltIn (Menu, SfbEntryRestart, L"Restart");
 
@@ -1129,4 +1130,3 @@ SfbLaunchDefaultEntry (VOID)
 
   return HasDefault;
 }
-

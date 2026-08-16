@@ -73,6 +73,7 @@ typedef enum {
   /* Built-in entries; no backing file, handled in code. */
   SfbEntryFastboot,
   SfbEntrySelector,
+  SfbEntrySettings,
   /* "Back" row at the foot of a submenu: returns to the parent menu. */
   SfbEntryBack,
   /* Power management actions offered at the end of the menu and on the
@@ -216,14 +217,17 @@ SfbGetVolumeLabel (IN EFI_FILE_PROTOCOL *Root,
 /*
  * The firmware on this platform rejects variables it does not know, so the two
  * things the menu has to remember outlive a reboot in the EFI System Partition
- * instead: two 1 KiB NUL-padded ASCII records written to the very end of the
+ * instead: three 1 KiB NUL-padded ASCII records written to the very end of the
  * partition, which is the only part of it that is safe to touch.
  */
 #define SFB_STORE_SLOT_BYTES  1024
-#define SFB_STORE_SLOTS       2
+#define SFB_STORE_SLOTS       3
 
-#define SFB_STORE_DEFAULT  0   /* the entry the menu timeout launches */
-#define SFB_STORE_CUSTOM   1   /* the single user-added menu entry */
+/* Settings occupies the newly reserved KiB immediately before the old store.
+ * Default/custom retain their original offsets from the end of the ESP. */
+#define SFB_STORE_SETTINGS  0   /* palette, lock mode and PIN */
+#define SFB_STORE_DEFAULT   1   /* the entry the menu timeout launches */
+#define SFB_STORE_CUSTOM    2   /* the single user-added menu entry */
 
 /*
  * Replace one record. Text is NUL-terminated ASCII of at most
