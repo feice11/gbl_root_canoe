@@ -149,6 +149,7 @@ STATIC CHAR8 StrSocVersion[MAX_RSP_SIZE];
 STATIC CHAR8 LogicalBlkSizeStr[MAX_RSP_SIZE];
 STATIC CHAR8 EraseBlkSizeStr[MAX_RSP_SIZE];
 STATIC CHAR8 MaxDownloadSizeStr[MAX_RSP_SIZE];
+STATIC CHAR8 MaxFetchSizeStr[MAX_RSP_SIZE];
 
 
 #define MAX_DISPLAY_PANEL_OVERRIDE 256
@@ -2749,6 +2750,15 @@ FastbootCommandSetup (IN VOID *Base, IN UINT64 Size)
   AsciiSPrint (MaxDownloadSizeStr,
                   sizeof (MaxDownloadSizeStr), "%ld", MaxDownLoadSize);
   FastbootPublishVar ("max-download-size", MaxDownloadSizeStr);
+
+#ifdef ENABLE_UPDATE_PARTITIONS_CMDS
+  /* The host checks this variable before it ever sends fetch:<partition>.
+   * CmdFetch already streams larger partitions as a sequence of requests, so
+   * advertise one transfer-buffer-sized chunk. */
+  AsciiSPrint (MaxFetchSizeStr, sizeof (MaxFetchSizeStr), "0x%x",
+               USB_BUFFER_SIZE);
+  FastbootPublishVar ("max-fetch-size", MaxFetchSizeStr);
+#endif
 
 
   AsciiSPrint (FullProduct, sizeof (FullProduct), "%a", PRODUCT_NAME);

@@ -19,6 +19,8 @@
 #include <Library/ShutdownServices.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
+#include <Protocol/EFIChargerEx.h>
 #include <Protocol/GraphicsOutput.h>
 #include <Protocol/SimpleTextIn.h>
 
@@ -353,6 +355,133 @@ SfbGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size,
   return Status;
 }
 
+/* ChargerEx exposes voltage rather than fuel-gauge SOC on this open-source
+ * interface. Use a conservative single-cell Li-ion curve for the status-bar
+ * percentage; the exact millivolt reading remains the source of truth. */
+STATIC
+UINTN
+SfbBatteryPercentFromVoltage (IN UINT32 Millivolts)
+{
+  STATIC CONST struct {
+    UINT32  Millivolts;
+    UINTN   Percent;
+  } Curve[] = {
+    { 3400,   0 }, { 3600,   8 }, { 3700,  18 }, { 3800,  35 },
+    { 3900,  52 }, { 4000,  68 }, { 4100,  82 }, { 4200,  92 },
+    { 4400, 100 }
+  };
+  UINTN  Index;
+
+  if (Millivolts <= Curve[0].Millivolts) {
+    return Curve[0].Percent;
+  }
+  for (Index = 1; Index < ARRAY_SIZE (Curve); Index++) {
+    if (Millivolts <= Curve[Index].Millivolts) {
+      UINT32  Span = Curve[Index].Millivolts - Curve[Index - 1].Millivolts;
+      return Curve[Index - 1].Percent +
+             (UINTN)((Millivolts - Curve[Index - 1].Millivolts) *
+                     (Curve[Index].Percent - Curve[Index - 1].Percent) / Span);
+    }
+  }
+  return 100;
+}
+
+STATIC
+VOID
+SfbReadPowerStatus (OUT BOOLEAN *Available,
+                    OUT UINTN   *Percent,
+                    OUT BOOLEAN *Charging)
+{
+  EFI_CHARGER_EX_PROTOCOL  *Charger = NULL;
+  EFI_STATUS               Status;
+  UINT32                   Millivolts = 0;
+  BOOLEAN                  Present = FALSE;
+
+  *Available = FALSE;
+  *Percent = 0;
+  *Charging = FALSE;
+
+  Status = gBS->LocateProtocol (&gChargerExProtocolGuid, NULL,
+                                (VOID **)&Charger);
+  if (EFI_ERROR (Status) || Charger == NULL) {
+    return;
+  }
+  if (Charger->GetChargerPresence != NULL) {
+    (VOID)Charger->GetChargerPresence (&Present);
+    *Charging = Present;
+  }
+  if (Charger->GetBatteryVoltage == NULL ||
+      EFI_ERROR (Charger->GetBatteryVoltage (&Millivolts)) ||
+      Millivolts < 2500 || Millivolts > 5000) {
+    return;
+  }
+
+  *Available = TRUE;
+  *Percent = SfbBatteryPercentFromVoltage (Millivolts);
+}
+
+STATIC
+VOID
+SfbDrawStatusBar (VOID)
+{
+  EFI_TIME  Time;
+  CHAR16    TimeText[16];
+  CHAR16    PercentText[16];
+  BOOLEAN   BatteryAvailable;
+  BOOLEAN   Charging;
+  UINTN     BatteryPercent;
+  UINTN     Width;
+  UINTN     StatusY;
+  UINTN     BatteryX;
+  UINTN     BatteryY;
+  UINTN     FillWidth;
+
+  if (!mSfbGraphical || mSfbSafeTop < 48) {
+    return;
+  }
+
+  Width = mSfbGop->Mode->Info->HorizontalResolution;
+  StatusY = (mSfbSafeTop - 32) / 2;
+  if (!EFI_ERROR (gRT->GetTime (&Time, NULL)) &&
+      Time.Hour < 24 && Time.Minute < 60) {
+    /* EFI_TIME is already expressed in the firmware's configured local time;
+     * TimeZone describes its automatic UTC offset and must not be applied a
+     * second time here. */
+    UnicodeSPrint (TimeText, sizeof (TimeText), L"%02u:%02u",
+                   (UINT32)Time.Hour, (UINT32)Time.Minute);
+  } else {
+    StrCpyS (TimeText, ARRAY_SIZE (TimeText), L"--:--");
+  }
+  SfbGfxText (72, StatusY, 32, TimeText, &mSfbColorText);
+
+  SfbReadPowerStatus (&BatteryAvailable, &BatteryPercent, &Charging);
+  UnicodeSPrint (PercentText, sizeof (PercentText),
+                 BatteryAvailable ? L"%u%%" : L"--%%",
+                 (UINT32)BatteryPercent);
+
+  BatteryX = Width - 220;
+  BatteryY = StatusY + 3;
+  /* Battery outline and terminal. */
+  SfbGfxFill (BatteryX, BatteryY, 56, 3, &mSfbColorMuted);
+  SfbGfxFill (BatteryX, BatteryY + 25, 56, 3, &mSfbColorMuted);
+  SfbGfxFill (BatteryX, BatteryY, 3, 28, &mSfbColorMuted);
+  SfbGfxFill (BatteryX + 53, BatteryY, 3, 28, &mSfbColorMuted);
+  SfbGfxFill (BatteryX + 56, BatteryY + 8, 5, 12, &mSfbColorMuted);
+  if (BatteryAvailable && BatteryPercent != 0) {
+    FillWidth = 46 * BatteryPercent / 100;
+    FillWidth = MAX (FillWidth, 2);
+    SfbGfxFill (BatteryX + 5, BatteryY + 5, FillWidth, 18,
+                Charging ? &mSfbColorPrimary : &mSfbColorText);
+  }
+  if (Charging) {
+    /* Compact lightning mark immediately before the battery. */
+    SfbGfxFill (BatteryX - 30, BatteryY + 2, 13, 8, &mSfbColorPrimary);
+    SfbGfxFill (BatteryX - 24, BatteryY + 8, 13, 8, &mSfbColorPrimary);
+    SfbGfxFill (BatteryX - 18, BatteryY + 14, 7, 11, &mSfbColorPrimary);
+  }
+  SfbGfxText (Width - 140, StatusY, 32, PercentText, &mSfbColorText);
+}
+
 /* SimpleTextIn reports repeats but does not reliably expose a key-up event on
  * these handsets. After Power confirms an action, wait until the input stream
  * has stayed quiet for a complete debounce window. This prevents one slightly
@@ -588,6 +717,7 @@ SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
     SfbGfxFill (0, 0, Width,
                 mSfbGop->Mode->Info->VerticalResolution,
                 &mSfbColorBackground);
+    SfbDrawStatusBar ();
     SfbGfxFill (0, mSfbSafeTop, Width, 168, &mSfbColorSurface);
     SfbGfxFill (0, mSfbSafeTop + 164, Width, 4, &mSfbColorPrimary);
     UnicodeSPrint (Header, sizeof (Header), L"%s", Title);
