@@ -571,17 +571,16 @@ SfbGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size,
         Sx = SxFixed >> 8;
         Fx = SxFixed & 0xff;
         SxNext = MIN (Sx + 1, (UINTN)Glyph->Advance - 1);
-#define SFB_ALPHA_AT(_x, _y) \
-  ((((_x) & 1) == 0) \
-      ? (Glyph->Bitmap[(_y) * SFB_FONT_STRIDE + (_x) / 2] >> 4) \
-      : (Glyph->Bitmap[(_y) * SFB_FONT_STRIDE + (_x) / 2] & 0x0f)) * 17)
-        A00 = SFB_ALPHA_AT (Sx, Sy);
-        A10 = SFB_ALPHA_AT (SxNext, Sy);
-        A01 = SFB_ALPHA_AT (Sx, SyNext);
-        A11 = SFB_ALPHA_AT (SxNext, SyNext);
+        Alpha = Glyph->Bitmap[Sy * SFB_FONT_STRIDE + Sx / 2];
+        A00 = (((Sx & 1) == 0) ? (Alpha >> 4) : (Alpha & 0x0f)) * 17;
+        Alpha = Glyph->Bitmap[Sy * SFB_FONT_STRIDE + SxNext / 2];
+        A10 = (((SxNext & 1) == 0) ? (Alpha >> 4) : (Alpha & 0x0f)) * 17;
+        Alpha = Glyph->Bitmap[SyNext * SFB_FONT_STRIDE + Sx / 2];
+        A01 = (((Sx & 1) == 0) ? (Alpha >> 4) : (Alpha & 0x0f)) * 17;
+        Alpha = Glyph->Bitmap[SyNext * SFB_FONT_STRIDE + SxNext / 2];
+        A11 = (((SxNext & 1) == 0) ? (Alpha >> 4) : (Alpha & 0x0f)) * 17;
         Alpha = (((A00 * (256 - Fx) + A10 * Fx) * (256 - Fy)) +
                  ((A01 * (256 - Fx) + A11 * Fx) * Fy) + 32768) >> 16;
-#undef SFB_ALPHA_AT
         if (Alpha != 0) {
           Pixel = &Buffer[Dy * Width + Cursor + Dx];
           Pixel->Blue = (UINT8)((Color->Blue * Alpha +
@@ -1117,8 +1116,6 @@ SfbEndScreen (IN CONST CHAR16 *Footer)
   CHAR16  Hint[SFB_UI_LINE_CHARS];
 
   if (mSfbGraphical) {
-    BOOLEAN IsDefault = (BOOLEAN)(FallbackMarker != NULL &&
-                                   StrCmp (FallbackMarker, L"*") == 0);
     UINTN  Width = mSfbGop->Mode->Info->HorizontalResolution;
     UINTN  Height = mSfbGop->Mode->Info->VerticalResolution;
 
@@ -1239,6 +1236,8 @@ SfbDrawRowIcon (IN BOOLEAN Selected, IN CANOE_UI_ICON Icon,
   CHAR16  Row[SFB_UI_LINE_CHARS];
 
   if (mSfbGraphical) {
+    BOOLEAN IsDefault = (BOOLEAN)(FallbackMarker != NULL &&
+                                   StrCmp (FallbackMarker, L"*") == 0);
     UINTN  Width = mSfbGop->Mode->Info->HorizontalResolution;
     UINTN  CardWidth = Width - 2 * CANOE_UI_SIDE_MARGIN;
     UINTN  IconSize = MIN (CANOE_UI_ICON_BOX,
