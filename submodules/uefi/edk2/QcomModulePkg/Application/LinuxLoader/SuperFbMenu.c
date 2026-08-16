@@ -333,15 +333,17 @@ STATIC
 CONST SFB_FONT_GLYPH *
 SfbFindGlyph (IN CHAR16 Codepoint)
 {
-  UINTN Low = 0;
-  UINTN High = ARRAY_SIZE (mSfbFontGlyphs);
-  while (Low < High) {
-    UINTN Mid = Low + (High - Low) / 2;
-    if (mSfbFontGlyphs[Mid].Codepoint < Codepoint) Low = Mid + 1;
-    else High = Mid;
+  UINTN Index;
+
+  /* SuperFbFont.h follows the source-string generation order, not Unicode
+   * codepoint order.  A binary search therefore works for the leading ASCII
+   * run but drops most Chinese glyphs.  The table is intentionally small, so
+   * a reliable linear lookup is cheaper than carrying another index in BDS. */
+  for (Index = 0; Index < ARRAY_SIZE (mSfbFontGlyphs); Index++) {
+    if (mSfbFontGlyphs[Index].Codepoint == Codepoint) {
+      return &mSfbFontGlyphs[Index];
+    }
   }
-  if (Low < ARRAY_SIZE (mSfbFontGlyphs) &&
-      mSfbFontGlyphs[Low].Codepoint == Codepoint) return &mSfbFontGlyphs[Low];
   return NULL;
 }
 
