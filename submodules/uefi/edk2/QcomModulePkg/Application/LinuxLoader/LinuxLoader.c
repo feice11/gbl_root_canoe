@@ -76,6 +76,7 @@
 #include <Library/StackCanary.h>
 #include "Library/ThreadStack.h"
 #include <Protocol/EFICardInfo.h>
+#include <Protocol/LoadedImage.h>
 #include <Protocol/SimpleTextIn.h>
 #include "SuperFbMenu.h"
 
@@ -187,6 +188,8 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
 {
 
   EFI_STATUS Status;
+  EFI_LOADED_IMAGE_PROTOCOL *LoadedImage = NULL;
+  BOOLEAN ForceMenu = FALSE;
 
    /* Update stack check guard with random value for better security */
   /* SilentMode Boot */
@@ -202,6 +205,22 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
          (UINTN)LinuxLoaderEntry & (~ (0xFFF))));
   DEBUG ((EFI_D_VERBOSE, "LinuxLoaderEntry Address: 0x%llx\n",
          (UINTN)LinuxLoaderEntry));
+
+  /* CmdBoot marks buffer-loaded EFI images as one-shot interactive sessions.
+   * This avoids relying on a handset key event during the USB hand-off and
+   * prevents a temporary `fastboot boot BDS.efi` from silently following the
+   * installed BDS default straight into Android. */
+  Status = gBS->HandleProtocol (
+                  ImageHandle,
+                  &gEfiLoadedImageProtocolGuid,
+                  (VOID **)&LoadedImage
+                  );
+  if (!EFI_ERROR (Status) && LoadedImage != NULL &&
+      LoadedImage->LoadOptions != NULL &&
+      LoadedImage->LoadOptionsSize >= sizeof (L"superfb-menu") &&
+      StrCmp ((CHAR16 *)LoadedImage->LoadOptions, L"superfb-menu") == 0) {
+    ForceMenu = TRUE;
+  }
 
   Status = InitThreadUnsafeStack ();
 
@@ -237,7 +256,7 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
      * Volume Up (the official recovery key slot) opens the boot menu; no Volume
      * Up within the window launches the saved default entry.
      */
-    MenuRequested = WaitForVolumeUpKey (3000);
+    MenuRequested = ForceMenu ? TRUE : WaitForVolumeUpKey (3000);
     DEBUG ((EFI_D_INFO, "SFB: power-on volume-up detected=%u\n", MenuRequested));
 
     /*

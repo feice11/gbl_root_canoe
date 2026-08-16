@@ -89,6 +89,7 @@ found at
 #include <Protocol/DiskIo.h>
 #include <Protocol/EFIUsbDevice.h>
 #include <Protocol/EFIUbiFlasher.h>
+#include <Protocol/LoadedImage.h>
 #include <Protocol/SimpleTextIn.h>
 #include <Protocol/SimpleTextOut.h>
 
@@ -2398,8 +2399,10 @@ IsEfiInBootImg (boot_img_hdr *Hdr, UINT32 Size, VOID **EfiData, UINT32 *EfiSize)
 STATIC EFI_STATUS
 BootEfiImage (VOID *Data, UINT32 Size)
 {
-  EFI_STATUS  Status;
-  EFI_HANDLE  ImageHandle = NULL;
+  STATIC CHAR16              ForceMenuOption[] = L"superfb-menu";
+  EFI_STATUS                 Status;
+  EFI_HANDLE                 ImageHandle = NULL;
+  EFI_LOADED_IMAGE_PROTOCOL  *LoadedImage = NULL;
 
   Status = gBS->LoadImage (
                   FALSE,
@@ -2412,6 +2415,21 @@ BootEfiImage (VOID *Data, UINT32 Size)
   if (EFI_ERROR (Status)) {
     DEBUG ((EFI_D_ERROR, "LoadImage failed: %r\n", Status));
     return Status;
+  }
+
+  /* A fastboot-booted copy is a one-shot interactive session. Tell the child
+   * loader to show its menu unconditionally instead of immediately following
+   * the default entry persisted by the installed BDS. */
+  Status = gBS->HandleProtocol (
+                  ImageHandle,
+                  &gEfiLoadedImageProtocolGuid,
+                  (VOID **)&LoadedImage
+                  );
+  if (!EFI_ERROR (Status) && LoadedImage != NULL) {
+    LoadedImage->LoadOptions = ForceMenuOption;
+    LoadedImage->LoadOptionsSize = sizeof (ForceMenuOption);
+  } else {
+    DEBUG ((EFI_D_WARN, "Cannot set EFI force-menu load option: %r\n", Status));
   }
 
   Status = gBS->StartImage (ImageHandle, NULL, NULL);
