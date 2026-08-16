@@ -189,7 +189,10 @@ LinuxLoaderEntry (IN EFI_HANDLE ImageHandle, IN EFI_SYSTEM_TABLE *SystemTable)
 
   EFI_STATUS Status;
   EFI_LOADED_IMAGE_PROTOCOL *LoadedImage = NULL;
-  BOOLEAN ForceMenu = FALSE;
+  /* Test build: remain interactive even when launched by an older installed
+   * BDS that cannot pass the superfb-menu load option yet. Do not use this
+   * variant as the permanently installed BDS. */
+  BOOLEAN ForceMenu = TRUE;
 
    /* Update stack check guard with random value for better security */
   /* SilentMode Boot */
