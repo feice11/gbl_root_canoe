@@ -225,7 +225,7 @@ SfbGetVolumeLabel (IN EFI_FILE_PROTOCOL *Root,
 
 /* Settings occupies the newly reserved KiB immediately before the old store.
  * Default/custom retain their original offsets from the end of the ESP. */
-#define SFB_STORE_SETTINGS  0   /* palette, lock, language, key guard and PIN */
+#define SFB_STORE_SETTINGS  0   /* palette, lock mode, language and PIN */
 #define SFB_STORE_DEFAULT   1   /* the entry the menu timeout launches */
 #define SFB_STORE_CUSTOM    2   /* the single user-added menu entry */
 
@@ -286,12 +286,6 @@ EFI_STATUS
 SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
                 IN BOOLEAN              Temporary,
                 IN BOOLEAN              ClearScreen);
-
-/* Apply the optional physical-key guard before chaining into another EFI
- * application. This drains a held Volume Down key without altering the reboot
- * reason used by RebootTools to request official Fastboot. */
-VOID
-SfbPrepareForChainload (VOID);
 
 /*
  * Load and start a single UEFI driver image named by a volume-relative path.

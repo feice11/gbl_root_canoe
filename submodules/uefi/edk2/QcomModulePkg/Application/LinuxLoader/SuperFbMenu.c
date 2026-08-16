@@ -76,7 +76,6 @@ STATIC CONST SFB_PALETTE  mSfbPalettes[SFB_THEME_COUNT] = {
 STATIC UINTN    mSfbTheme = 0;
 STATIC UINTN    mSfbLockMode = SFB_LOCK_OFF;
 STATIC UINTN    mSfbLanguage = 0; /* 0 = Chinese, 1 = English */
-STATIC BOOLEAN  mSfbBlockPhysicalFastboot = FALSE;
 STATIC CHAR8    mSfbPin[5] = "1234";
 STATIC BOOLEAN  mSfbSettingsLoaded = FALSE;
 
@@ -116,7 +115,8 @@ SfbLoadSettings (VOID)
     mSfbTheme = Record[5] - '0';
     mSfbLockMode = Record[7] - '0';
     mSfbLanguage = Record[9] - '0';
-    mSfbBlockPhysicalFastboot = (BOOLEAN)(Record[11] == '1');
+    /* Record[11] belonged to a short-lived physical-key guard. Keep accepting
+     * the field so an already-written SFC2 record remains compatible. */
     for (Index = 0; Index < 4; Index++) {
       if (Record[13 + Index] < '0' || Record[13 + Index] > '9') {
         mSfbLockMode = SFB_LOCK_OFF;
@@ -153,8 +153,7 @@ SfbSaveSettings (VOID)
 
   AsciiSPrint (Record, sizeof (Record), "SFC2|%u|%u|%u|%u|%a",
                (UINT32)mSfbTheme, (UINT32)mSfbLockMode,
-               (UINT32)mSfbLanguage,
-               mSfbBlockPhysicalFastboot ? 1U : 0U, mSfbPin);
+               (UINT32)mSfbLanguage, 0U, mSfbPin);
   return SfbStoreWrite (SFB_STORE_SETTINGS, Record);
 }
 
@@ -396,21 +395,6 @@ VOID
 SfbWaitForSelectRelease (VOID)
 {
   SfbWaitForInputQuiet (200, 220);
-}
-
-VOID
-SfbPrepareForChainload (VOID)
-{
-  SfbLoadSettings ();
-  if (!mSfbBlockPhysicalFastboot) {
-    return;
-  }
-
-  /* The patched ABL interprets a still-held Volume Down key as a physical
-   * Fastboot request. Hold the chain here until the input stream has remained
-   * quiet long enough to prove that the key was released. RebootTools uses a
-   * reset reason instead, so its authorized Bootloader action is unaffected. */
-  SfbWaitForInputQuiet (700, 500);
 }
 
 STATIC
@@ -963,8 +947,7 @@ SfbRunSettings (VOID)
     CHAR16  Theme[48];
     CHAR16  Language[48];
     CHAR16  Lock[48];
-    CHAR16  FastbootGuard[64];
-    UINTN   Count = (mSfbLockMode == SFB_LOCK_PIN) ? 6 : 5;
+    UINTN   Count = (mSfbLockMode == SFB_LOCK_PIN) ? 5 : 4;
 
     UnicodeSPrint (Theme, sizeof (Theme),
                    mSfbLanguage == 0 ? L"配色主题    %s" : L"Color theme    %s",
@@ -974,24 +957,18 @@ SfbRunSettings (VOID)
     UnicodeSPrint (Lock, sizeof (Lock),
                    mSfbLanguage == 0 ? L"锁定方式    %s" : L"Lock mode    %s",
                    SfbLockName ());
-    UnicodeSPrint (FastbootGuard, sizeof (FastbootGuard),
-                   mSfbLanguage == 0 ? L"禁用按键 Fastboot    %s" : L"Block key Fastboot    %s",
-                   mSfbLanguage == 0
-                     ? (mSfbBlockPhysicalFastboot ? L"开启" : L"关闭")
-                     : (mSfbBlockPhysicalFastboot ? L"On" : L"Off"));
     SfbBeginScreen (L"Settings",
                     mSfbLanguage == 0 ? L"选择一项进行更改"
                                       : L"Select an item to change");
     SfbDrawRow ((BOOLEAN)(Cursor == 0), L"COLOR", Theme);
     SfbDrawRow ((BOOLEAN)(Cursor == 1), L"LANG", Language);
     SfbDrawRow ((BOOLEAN)(Cursor == 2), L"LOCK", Lock);
-    SfbDrawRow ((BOOLEAN)(Cursor == 3), L"GUARD", FastbootGuard);
     if (mSfbLockMode == SFB_LOCK_PIN) {
-      SfbDrawRow ((BOOLEAN)(Cursor == 4), L"PIN",
+      SfbDrawRow ((BOOLEAN)(Cursor == 3), L"PIN",
                   mSfbLanguage == 0 ? L"更改 PIN 密码" : L"Change PIN");
-      SfbDrawRow ((BOOLEAN)(Cursor == 5), L"BACK", SfbLocalize (L"Back"));
-    } else {
       SfbDrawRow ((BOOLEAN)(Cursor == 4), L"BACK", SfbLocalize (L"Back"));
+    } else {
+      SfbDrawRow ((BOOLEAN)(Cursor == 3), L"BACK", SfbLocalize (L"Back"));
     }
     SfbEndScreen (L"Select");
 
@@ -1021,11 +998,7 @@ SfbRunSettings (VOID)
       mSfbLockMode = NewMode;
       SfbSaveSettings ();
       Cursor = 2;
-    } else if (Cursor == 3) {
-      mSfbBlockPhysicalFastboot = (BOOLEAN)!mSfbBlockPhysicalFastboot;
-      SfbSaveSettings ();
-      Cursor = 3;
-    } else if (mSfbLockMode == SFB_LOCK_PIN && Cursor == 4) {
+    } else if (mSfbLockMode == SFB_LOCK_PIN && Cursor == 3) {
       CHAR8  NewPin[5];
 
       ZeroMem (NewPin, sizeof (NewPin));

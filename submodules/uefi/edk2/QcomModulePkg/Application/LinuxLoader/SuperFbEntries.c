@@ -1064,10 +1064,6 @@ SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
    */
   SfbShowBootingScreen (Entry->Desc, ClearScreen);
 
-  /* When enabled in Settings, consume a held physical Volume Down key before
-   * the patched ABL starts. A reboot-to-bootloader reason is left untouched. */
-  SfbPrepareForChainload ();
-
   /*
    * Committing the default before the launch is deliberate: an image that boots
    * successfully never comes back to do it afterwards. A "no default" entry
