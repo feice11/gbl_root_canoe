@@ -293,7 +293,8 @@ SfbDriverActionMenu (IN EFI_HANDLE   Volume,
     SfbBeginScreen (L"EFI Driver", FullPath);
 
     for (Index = 0; Index < ARRAY_SIZE (Actions); Index++) {
-      SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", Actions[Index]);
+      SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ",
+                  SfbLocalize (Actions[Index]));
     }
 
     SfbEndScreen (L"Select");
@@ -364,7 +365,8 @@ SfbEfiActionMenu (IN EFI_HANDLE   Volume,
     SfbBeginScreen (L"EFI Application", FullPath);
 
     for (Index = 0; Index < ARRAY_SIZE (Actions); Index++) {
-      SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", Actions[Index]);
+      SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ",
+                  SfbLocalize (Actions[Index]));
     }
 
     SfbEndScreen (L"Select");
@@ -632,7 +634,7 @@ SfbRunFileBrowser (VOID)
 
     for (Index = Start; Index < Last; Index++) {
       if (Index == VolumeCount) {
-        SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", L"Back");
+        SfbDrawRow ((BOOLEAN)(Index == Cursor), L" ", SfbLocalize (L"Back"));
       } else {
         SfbDrawRow ((BOOLEAN)(Index == Cursor), L"[V]", Rows[Index].Label);
       }

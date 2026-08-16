@@ -75,6 +75,8 @@ STATIC CONST SFB_PALETTE  mSfbPalettes[SFB_THEME_COUNT] = {
 
 STATIC UINTN    mSfbTheme = 0;
 STATIC UINTN    mSfbLockMode = SFB_LOCK_OFF;
+STATIC UINTN    mSfbLanguage = 0; /* 0 = Chinese, 1 = English */
+STATIC BOOLEAN  mSfbBlockPhysicalFastboot = FALSE;
 STATIC CHAR8    mSfbPin[5] = "1234";
 STATIC BOOLEAN  mSfbSettingsLoaded = FALSE;
 
@@ -98,14 +100,37 @@ SfbLoadSettings (VOID)
     return;
   }
   mSfbSettingsLoaded = TRUE;
+  ZeroMem (Record, sizeof (Record));
 
   if (!EFI_ERROR (SfbStoreRead (SFB_STORE_SETTINGS, Record,
                                 sizeof (Record))) &&
-      AsciiStrnCmp (Record, "SFC1|", 5) == 0 &&
+      AsciiStrnCmp (Record, "SFC2|", 5) == 0 &&
       Record[5] >= '0' && Record[5] < '0' + SFB_THEME_COUNT &&
       Record[6] == '|' &&
       Record[7] >= '0' && Record[7] <= '2' &&
-      Record[8] == '|') {
+      Record[8] == '|' &&
+      (Record[9] == '0' || Record[9] == '1') &&
+      Record[10] == '|' &&
+      (Record[11] == '0' || Record[11] == '1') &&
+      Record[12] == '|') {
+    mSfbTheme = Record[5] - '0';
+    mSfbLockMode = Record[7] - '0';
+    mSfbLanguage = Record[9] - '0';
+    mSfbBlockPhysicalFastboot = (BOOLEAN)(Record[11] == '1');
+    for (Index = 0; Index < 4; Index++) {
+      if (Record[13 + Index] < '0' || Record[13 + Index] > '9') {
+        mSfbLockMode = SFB_LOCK_OFF;
+        break;
+      }
+      mSfbPin[Index] = Record[13 + Index];
+    }
+    mSfbPin[4] = '\0';
+  } else if (AsciiStrnCmp (Record, "SFC1|", 5) == 0 &&
+             Record[5] >= '0' && Record[5] < '0' + SFB_THEME_COUNT &&
+             Record[6] == '|' &&
+             Record[7] >= '0' && Record[7] <= '2' &&
+             Record[8] == '|') {
+    /* Backward-compatible import of the first settings format. */
     mSfbTheme = Record[5] - '0';
     mSfbLockMode = Record[7] - '0';
     for (Index = 0; Index < 4; Index++) {
@@ -126,16 +151,18 @@ SfbSaveSettings (VOID)
 {
   CHAR8  Record[32];
 
-  AsciiSPrint (Record, sizeof (Record), "SFC1|%u|%u|%a",
-               (UINT32)mSfbTheme, (UINT32)mSfbLockMode, mSfbPin);
+  AsciiSPrint (Record, sizeof (Record), "SFC2|%u|%u|%u|%u|%a",
+               (UINT32)mSfbTheme, (UINT32)mSfbLockMode,
+               (UINT32)mSfbLanguage,
+               mSfbBlockPhysicalFastboot ? 1U : 0U, mSfbPin);
   return SfbStoreWrite (SFB_STORE_SETTINGS, Record);
 }
 
-STATIC
 CONST CHAR16 *
-SfbUiChinese (IN CONST CHAR16 *Text)
+SfbLocalize (IN CONST CHAR16 *Text)
 {
   if (Text == NULL)                         return L"";
+  if (mSfbLanguage != 0)                    return Text;
   if (StrCmp (Text, L"Boot Menu") == 0)     return L"启动菜单";
   if (StrCmp (Text, L"EFI Program Selector") == 0) return L"EFI 程序选择器";
   if (StrCmp (Text, L"Action failed") == 0) return L"操作失败";
@@ -144,6 +171,41 @@ SfbUiChinese (IN CONST CHAR16 *Text)
   if (StrCmp (Text, L"Power") == 0)         return L"电源选项";
   if (StrCmp (Text, L"Boot control") == 0)  return L"启动控制";
   if (StrCmp (Text, L"Fastboot") == 0)      return L"Fastboot 模式";
+  if (StrCmp (Text, L"Settings") == 0)      return L"设置";
+  if (StrCmp (Text, L"Enter PIN") == 0)     return L"输入 PIN";
+  if (StrCmp (Text, L"Set PIN") == 0)       return L"设置 PIN";
+  if (StrCmp (Text, L"Simple lock") == 0)   return L"简易锁";
+  if (StrCmp (Text, L"Wrong password") == 0)return L"密码错误";
+  if (StrCmp (Text, L"Try again") == 0)     return L"请重试";
+  if (StrCmp (Text, L"Back") == 0)          return L"返回";
+  if (StrCmp (Text, L"Select") == 0)        return L"确认";
+  if (StrCmp (Text, L"Continue") == 0)      return L"继续";
+  if (StrCmp (Text, L"Next") == 0)          return L"下一位";
+  if (StrCmp (Text, L"Unlock") == 0)        return L"解锁";
+  if (StrCmp (Text, L"Retry") == 0)         return L"重试";
+  if (StrCmp (Text, L"Open") == 0)          return L"打开";
+  if (StrCmp (Text, L"Powering off...") == 0) return L"正在关机...";
+  if (StrCmp (Text, L"Restarting...") == 0) return L"正在重启...";
+  if (StrCmp (Text, L"Please wait") == 0)   return L"请稍候";
+  if (StrCmp (Text, L"USB service is ready") == 0) return L"USB 服务已就绪";
+  if (StrCmp (Text, L"Starting the selected EFI application") == 0) return L"正在启动所选 EFI 程序";
+  if (StrCmp (Text, L"Preparing devices and boot entries") == 0) return L"正在准备设备和启动项";
+  if (StrCmp (Text, L"EFI Driver") == 0) return L"EFI 驱动程序";
+  if (StrCmp (Text, L"EFI Application") == 0) return L"EFI 应用程序";
+  if (StrCmp (Text, L"Load") == 0) return L"加载";
+  if (StrCmp (Text, L"Boot (temporary)") == 0) return L"临时启动";
+  if (StrCmp (Text, L"Add to BootMenu") == 0) return L"添加到启动菜单";
+  if (StrCmp (Text, L"Driver load failed") == 0) return L"驱动加载失败";
+  if (StrCmp (Text, L"Driver loaded") == 0) return L"驱动已加载";
+  if (StrCmp (Text, L"Cannot address that file") == 0) return L"无法访问该文件";
+  if (StrCmp (Text, L"Boot failed") == 0) return L"启动失败";
+  if (StrCmp (Text, L"Could not save entry") == 0) return L"无法保存启动项";
+  if (StrCmp (Text, L"Added to boot menu") == 0) return L"已添加到启动菜单";
+  if (StrCmp (Text, L"Out of memory") == 0) return L"内存不足";
+  if (StrCmp (Text, L"Cannot read directory") == 0) return L"无法读取目录";
+  if (StrCmp (Text, L"Not an EFI application") == 0) return L"不是 EFI 应用程序";
+  if (StrCmp (Text, L"No FAT32 volumes found") == 0) return L"未找到 FAT32 卷";
+  if (StrCmp (Text, L"Choose a FAT32 volume to browse.") == 0) return L"选择要浏览的 FAT32 卷";
   return Text;
 }
 
@@ -156,12 +218,12 @@ CONST CHAR16 *
 SfbUiEntryText (IN SFB_ENTRY_KIND Kind, IN CONST CHAR16 *Text)
 {
   switch (Kind) {
-  case SfbEntryFastboot: return L"进入 Fastboot";
-  case SfbEntrySelector: return L"选择 EFI 程序";
-  case SfbEntrySettings: return L"设置";
-  case SfbEntryBack:     return L"返回";
-  case SfbEntryPowerOff: return L"关机";
-  case SfbEntryRestart:  return L"重新启动";
+  case SfbEntryFastboot: return mSfbLanguage == 0 ? L"进入 Fastboot" : Text;
+  case SfbEntrySelector: return mSfbLanguage == 0 ? L"选择 EFI 程序" : Text;
+  case SfbEntrySettings: return mSfbLanguage == 0 ? L"设置" : Text;
+  case SfbEntryBack:     return mSfbLanguage == 0 ? L"返回" : Text;
+  case SfbEntryPowerOff: return mSfbLanguage == 0 ? L"关机" : Text;
+  case SfbEntryRestart:  return mSfbLanguage == 0 ? L"重新启动" : Text;
   default:               return Text != NULL ? Text : L"";
   }
 }
@@ -298,7 +360,7 @@ SfbGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size,
  * long press from confirming a second item on the next screen. */
 STATIC
 VOID
-SfbWaitForSelectRelease (VOID)
+SfbWaitForInputQuiet (IN UINT32 LeadMs, IN UINT32 QuietMs)
 {
   EFI_EVENT      TimerEvent;
   EFI_EVENT      WaitList[2];
@@ -306,7 +368,7 @@ SfbWaitForSelectRelease (VOID)
   EFI_STATUS     Status;
   UINTN          EventIndex;
 
-  gBS->Stall (200 * 1000);
+  gBS->Stall ((UINTN)LeadMs * 1000);
   gST->ConIn->Reset (gST->ConIn, FALSE);
   Status = gBS->CreateEvent (EVT_TIMER, TPL_CALLBACK, NULL, NULL, &TimerEvent);
   if (EFI_ERROR (Status)) {
@@ -316,7 +378,7 @@ SfbWaitForSelectRelease (VOID)
   WaitList[0] = gST->ConIn->WaitForKey;
   WaitList[1] = TimerEvent;
   while (TRUE) {
-    gBS->SetTimer (TimerEvent, TimerRelative, 220 * 10000);
+    gBS->SetTimer (TimerEvent, TimerRelative, (UINT64)QuietMs * 10000);
     Status = gBS->WaitForEvent (2, WaitList, &EventIndex);
     if (EFI_ERROR (Status) || EventIndex == 1) {
       break;
@@ -327,6 +389,28 @@ SfbWaitForSelectRelease (VOID)
   }
   gBS->CloseEvent (TimerEvent);
   gST->ConIn->Reset (gST->ConIn, FALSE);
+}
+
+STATIC
+VOID
+SfbWaitForSelectRelease (VOID)
+{
+  SfbWaitForInputQuiet (200, 220);
+}
+
+VOID
+SfbPrepareForChainload (VOID)
+{
+  SfbLoadSettings ();
+  if (!mSfbBlockPhysicalFastboot) {
+    return;
+  }
+
+  /* The patched ABL interprets a still-held Volume Down key as a physical
+   * Fastboot request. Hold the chain here until the input stream has remained
+   * quiet long enough to prove that the key was released. RebootTools uses a
+   * reset reason instead, so its authorized Bootloader action is unaffected. */
+  SfbWaitForInputQuiet (700, 500);
 }
 
 STATIC
@@ -384,13 +468,14 @@ SfbUiFullRow (IN UINTN Attribute, IN CONST CHAR16 *Text)
   if (Text == NULL) {
     Text = L"";
   }
+  Text = SfbLocalize (Text);
 
   if (mSfbGraphical) {
     EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *Color;
 
     Color = (Attribute == SFB_ATTR_ERROR) ? &mSfbColorPrimary :
             (Attribute == SFB_ATTR_MUTED) ? &mSfbColorMuted : &mSfbColorText;
-    SfbGfxText (72, mSfbGfxY, 30, SfbUiChinese (Text), Color);
+    SfbGfxText (72, mSfbGfxY, 30, Text, Color);
     mSfbGfxY += 58;
     return;
   }
@@ -506,6 +591,11 @@ SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
   CHAR16  Header[SFB_UI_LINE_CHARS];
   UINTN   Width;
 
+  SfbLoadSettings ();
+  Title = SfbLocalize (Title);
+  if (Subtitle != NULL) {
+    Subtitle = SfbLocalize (Subtitle);
+  }
   SfbUiInitGraphics ();
   if (mSfbGraphical) {
     Width = mSfbGop->Mode->Info->HorizontalResolution;
@@ -516,11 +606,10 @@ SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
                 &mSfbColorBackground);
     SfbGfxFill (0, mSfbSafeTop, Width, 168, &mSfbColorSurface);
     SfbGfxFill (0, mSfbSafeTop + 164, Width, 4, &mSfbColorPrimary);
-    UnicodeSPrint (Header, sizeof (Header), L"%s", SfbUiChinese (Title));
+    UnicodeSPrint (Header, sizeof (Header), L"%s", Title);
     SfbGfxText (72, mSfbSafeTop + 36, 60, Header, &mSfbColorText);
     if (Subtitle != NULL) {
-      SfbGfxText (72, mSfbSafeTop + 184, 32,
-                  SfbUiChinese (Subtitle), &mSfbColorMuted);
+      SfbGfxText (72, mSfbSafeTop + 184, 32, Subtitle, &mSfbColorMuted);
       mSfbGfxY = mSfbSafeTop + 244;
     } else {
       mSfbGfxY = mSfbSafeTop + 204;
@@ -555,15 +644,22 @@ SfbEndScreen (IN CONST CHAR16 *Footer)
     SfbGfxFill (0, Height - 112, Width, 112, &mSfbColorSurface);
     SfbGfxFill (0, Height - 116, Width, 4, &mSfbColorPrimary);
     SfbGfxText (72, Height - 84, 36,
-                L"音量 +/-：移动      电源键：确认",
+                mSfbLanguage == 0
+                  ? L"音量 +/-：移动      电源键：确认"
+                  : L"VOL +/-: Move      POWER: Select",
                 &mSfbColorMuted);
     return;
   }
 
   SfbUiFullRow (SFB_ATTR_NORMAL, L"");
   SfbUiRule ();
-  UnicodeSPrint (Hint, sizeof (Hint), L"  [VOL +/-] Navigate    [POWER] %s",
-                 Footer != NULL ? Footer : L"Select");
+  if (mSfbLanguage == 0) {
+    UnicodeSPrint (Hint, sizeof (Hint), L"  [音量 +/-] 移动    [电源键] %s",
+                   Footer != NULL ? SfbLocalize (Footer) : L"确认");
+  } else {
+    UnicodeSPrint (Hint, sizeof (Hint), L"  [VOL +/-] Navigate    [POWER] %s",
+                   Footer != NULL ? Footer : L"Select");
+  }
   SfbUiFullRow (SFB_ATTR_MUTED, Hint);
 }
 
@@ -634,7 +730,8 @@ SfbReportStatus (IN CONST CHAR16 *What, IN EFI_STATUS Status)
 
   SfbBeginScreen (EFI_ERROR (Status) ? L"Action failed" : L"Action complete",
                   What);
-  UnicodeSPrint (Detail, sizeof (Detail), L"  Status  %r", Status);
+  UnicodeSPrint (Detail, sizeof (Detail),
+                 mSfbLanguage == 0 ? L"  状态  %r" : L"  Status  %r", Status);
   SfbUiFullRow (EFI_ERROR (Status) ? SFB_ATTR_ERROR : SFB_ATTR_SUCCESS,
                 Detail);
   SfbEndScreen (L"Continue");
@@ -653,7 +750,9 @@ SfbShowFastbootMode (VOID)
   SfbBeginScreen (L"Fastboot", L"USB service is ready");
   SfbUiFullRow (SFB_ATTR_SUCCESS, L"  ONLINE");
   SfbUiFullRow (SFB_ATTR_NORMAL,
-                L"  Connect a host and use fastboot to manage this device.");
+                mSfbLanguage == 0
+                  ? L"  连接电脑后使用 fastboot 管理设备。"
+                  : L"  Connect a host and use fastboot to manage this device.");
 }
 
 /*
@@ -702,7 +801,8 @@ VOID
 SfbShowEnteringMenu (VOID)
 {
   SfbBeginScreen (L"Boot control", L"Preparing devices and boot entries");
-  SfbUiFullRow (SFB_ATTR_ACCENT, L"  INITIALIZING ...");
+  SfbUiFullRow (SFB_ATTR_ACCENT,
+                mSfbLanguage == 0 ? L"  正在初始化 ..." : L"  INITIALIZING ...");
 
   /* Wait for the key to be released... */
   gBS->Stall (SFB_ENTER_MENU_DELAY_S * 1000 * 1000);
@@ -716,6 +816,14 @@ STATIC
 CONST CHAR16 *
 SfbThemeName (VOID)
 {
+  if (mSfbLanguage != 0) {
+    switch (mSfbTheme) {
+    case 1: return L"Purple";
+    case 2: return L"Green";
+    case 3: return L"Orange";
+    default: return L"Blue";
+    }
+  }
   switch (mSfbTheme) {
   case 1: return L"紫色";
   case 2: return L"绿色";
@@ -728,6 +836,13 @@ STATIC
 CONST CHAR16 *
 SfbLockName (VOID)
 {
+  if (mSfbLanguage != 0) {
+    switch (mSfbLockMode) {
+    case SFB_LOCK_SIMPLE: return L"Simple";
+    case SFB_LOCK_PIN:    return L"PIN";
+    default:              return L"Off";
+    }
+  }
   switch (mSfbLockMode) {
   case SFB_LOCK_SIMPLE: return L"简易锁";
   case SFB_LOCK_PIN:    return L"PIN 密码";
@@ -763,9 +878,10 @@ SfbEditPin (IN BOOLEAN MaskPrevious, OUT CHAR8 Pin[5])
       Display[Index * 2 + 1] = L' ';
     }
     Display[7] = L'\0';
-    UnicodeSPrint (Progress, sizeof (Progress), L"当前第 %u 位",
+    UnicodeSPrint (Progress, sizeof (Progress),
+                   mSfbLanguage == 0 ? L"当前第 %u 位" : L"Digit %u of 4",
                    (UINT32)(Position + 1));
-    SfbBeginScreen (MaskPrevious ? L"输入 PIN" : L"设置 PIN",
+    SfbBeginScreen (MaskPrevious ? L"Enter PIN" : L"Set PIN",
                     Progress);
     SfbDrawRow (TRUE, L"PIN", Display);
     SfbEndScreen (L"Next");
@@ -801,10 +917,14 @@ SfbUnlock (VOID)
       CHAR16  Progress[32];
       SFB_KEY Key;
 
-      UnicodeSPrint (Progress, sizeof (Progress), L"输入进度  %u / 4",
+      UnicodeSPrint (Progress, sizeof (Progress),
+                     mSfbLanguage == 0 ? L"输入进度  %u / 4" : L"Progress  %u / 4",
                      (UINT32)Position);
-      SfbBeginScreen (L"简易锁", Progress);
-      SfbUiFullRow (SFB_ATTR_ACCENT, L"顺序：音量+  音量-  音量+  电源键");
+      SfbBeginScreen (L"Simple lock", Progress);
+      SfbUiFullRow (SFB_ATTR_ACCENT,
+                    mSfbLanguage == 0
+                      ? L"顺序：音量+  音量-  音量+  电源键"
+                      : L"Sequence: VOL+  VOL-  VOL+  POWER");
       SfbEndScreen (L"Unlock");
       Key = SfbWaitForKey (0);
       if (Key == Sequence[Position]) {
@@ -824,8 +944,9 @@ SfbUnlock (VOID)
     if (CompareMem (Attempt, mSfbPin, 4) == 0) {
       return;
     }
-    SfbBeginScreen (L"密码错误", L"请重试");
-    SfbUiFullRow (SFB_ATTR_ERROR, L"PIN 不正确");
+    SfbBeginScreen (L"Wrong password", L"Try again");
+    SfbUiFullRow (SFB_ATTR_ERROR,
+                  mSfbLanguage == 0 ? L"PIN 不正确" : L"Incorrect PIN");
     SfbEndScreen (L"Retry");
     SfbWaitForKey (0);
   }
@@ -840,19 +961,37 @@ SfbRunSettings (VOID)
 
   while (TRUE) {
     CHAR16  Theme[48];
+    CHAR16  Language[48];
     CHAR16  Lock[48];
-    UINTN   Count = (mSfbLockMode == SFB_LOCK_PIN) ? 4 : 3;
+    CHAR16  FastbootGuard[64];
+    UINTN   Count = (mSfbLockMode == SFB_LOCK_PIN) ? 6 : 5;
 
-    UnicodeSPrint (Theme, sizeof (Theme), L"配色主题    %s", SfbThemeName ());
-    UnicodeSPrint (Lock, sizeof (Lock), L"锁定方式    %s", SfbLockName ());
-    SfbBeginScreen (L"设置", L"选择一项进行更改");
+    UnicodeSPrint (Theme, sizeof (Theme),
+                   mSfbLanguage == 0 ? L"配色主题    %s" : L"Color theme    %s",
+                   SfbThemeName ());
+    UnicodeSPrint (Language, sizeof (Language),
+                   mSfbLanguage == 0 ? L"语言    中文" : L"Language    English");
+    UnicodeSPrint (Lock, sizeof (Lock),
+                   mSfbLanguage == 0 ? L"锁定方式    %s" : L"Lock mode    %s",
+                   SfbLockName ());
+    UnicodeSPrint (FastbootGuard, sizeof (FastbootGuard),
+                   mSfbLanguage == 0 ? L"禁用按键 Fastboot    %s" : L"Block key Fastboot    %s",
+                   mSfbLanguage == 0
+                     ? (mSfbBlockPhysicalFastboot ? L"开启" : L"关闭")
+                     : (mSfbBlockPhysicalFastboot ? L"On" : L"Off"));
+    SfbBeginScreen (L"Settings",
+                    mSfbLanguage == 0 ? L"选择一项进行更改"
+                                      : L"Select an item to change");
     SfbDrawRow ((BOOLEAN)(Cursor == 0), L"COLOR", Theme);
-    SfbDrawRow ((BOOLEAN)(Cursor == 1), L"LOCK", Lock);
+    SfbDrawRow ((BOOLEAN)(Cursor == 1), L"LANG", Language);
+    SfbDrawRow ((BOOLEAN)(Cursor == 2), L"LOCK", Lock);
+    SfbDrawRow ((BOOLEAN)(Cursor == 3), L"GUARD", FastbootGuard);
     if (mSfbLockMode == SFB_LOCK_PIN) {
-      SfbDrawRow ((BOOLEAN)(Cursor == 2), L"PIN", L"更改 PIN 密码");
-      SfbDrawRow ((BOOLEAN)(Cursor == 3), L"BACK", L"返回");
+      SfbDrawRow ((BOOLEAN)(Cursor == 4), L"PIN",
+                  mSfbLanguage == 0 ? L"更改 PIN 密码" : L"Change PIN");
+      SfbDrawRow ((BOOLEAN)(Cursor == 5), L"BACK", SfbLocalize (L"Back"));
     } else {
-      SfbDrawRow ((BOOLEAN)(Cursor == 2), L"BACK", L"返回");
+      SfbDrawRow ((BOOLEAN)(Cursor == 4), L"BACK", SfbLocalize (L"Back"));
     }
     SfbEndScreen (L"Select");
 
@@ -866,6 +1005,10 @@ SfbRunSettings (VOID)
       SfbApplyPalette ();
       SfbSaveSettings ();
     } else if (Cursor == 1) {
+      mSfbLanguage = (mSfbLanguage + 1) % 2;
+      SfbSaveSettings ();
+      Cursor = 1;
+    } else if (Cursor == 2) {
       UINTN  NewMode = (mSfbLockMode + 1) % 3;
 
       if (NewMode == SFB_LOCK_PIN) {
@@ -877,8 +1020,12 @@ SfbRunSettings (VOID)
       }
       mSfbLockMode = NewMode;
       SfbSaveSettings ();
-      Cursor = 1;
-    } else if (mSfbLockMode == SFB_LOCK_PIN && Cursor == 2) {
+      Cursor = 2;
+    } else if (Cursor == 3) {
+      mSfbBlockPhysicalFastboot = (BOOLEAN)!mSfbBlockPhysicalFastboot;
+      SfbSaveSettings ();
+      Cursor = 3;
+    } else if (mSfbLockMode == SFB_LOCK_PIN && Cursor == 4) {
       CHAR8  NewPin[5];
 
       ZeroMem (NewPin, sizeof (NewPin));
@@ -906,7 +1053,10 @@ SfbDrawMenu (IN CONST SFB_MENU_STATE *Menu,
   CHAR16  Summary[SFB_UI_LINE_CHARS];
 
   UnicodeSPrint (Summary, sizeof (Summary),
-                 L"%u 个启动项  /  * 表示默认项", (UINT32)Menu->Count);
+                 mSfbLanguage == 0
+                   ? L"%u 个启动项  /  * 表示默认项"
+                   : L"%u boot entries  /  * marks default",
+                 (UINT32)Menu->Count);
   SfbBeginScreen (Title, Summary);
 
   if (Menu->Count == 0) {
