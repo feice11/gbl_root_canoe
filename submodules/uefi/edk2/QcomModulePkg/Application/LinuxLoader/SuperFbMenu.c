@@ -358,6 +358,7 @@ SfbGfxMeasureText (IN UINT16 Size, IN CONST CHAR16 *Text)
   if (Text == NULL || Size == 0) return 0;
   for (Index = 0; Text[Index] != L'\0'; Index++) {
     Glyph = SfbFindGlyph (Text[Index]);
+    if (Glyph == NULL) Glyph = SfbFindGlyph (L'?');
     if (Glyph != NULL) {
       Width += ((UINTN)Glyph->Advance * Size + SFB_FONT_HEIGHT - 1) /
                SFB_FONT_HEIGHT;
@@ -453,53 +454,68 @@ SfbGfxGradientText (IN UINTN Y, IN UINT16 Preferred, IN UINT16 Minimum,
 STATIC
 VOID
 SfbGfxIcon (IN UINTN X, IN UINTN Y, IN UINTN Size, IN CANOE_UI_ICON Icon,
+            IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color);
+
+STATIC CONST INT16 mSfbCircleX[24] = {
+  0,259,500,707,866,966,1000,966,866,707,500,259,
+  0,-259,-500,-707,-866,-966,-1000,-966,-866,-707,-500,-259
+};
+STATIC CONST INT16 mSfbCircleY[24] = {
+  -1000,-966,-866,-707,-500,-259,0,259,500,707,866,966,
+  1000,966,866,707,500,259,0,-259,-500,-707,-866,-966
+};
+
+STATIC
+VOID
+SfbGfxIcon (IN UINTN X, IN UINTN Y, IN UINTN Size, IN CANOE_UI_ICON Icon,
             IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color)
 {
-  UINTN U = MAX (2, Size / 9);
-  UINTN C = Size / 2;
-
-  if (Icon == CanoeIconNone) return;
-  /* Every icon is made from filled primitives so it works on bare GOP. */
-  if (Icon == CanoeIconBoot || Icon == CanoeIconRestart ||
-      Icon == CanoeIconBack) {
-    SfbGfxFill (X + U, Y + C - U, Size - 2 * U, 2 * U, Color);
-    SfbGfxFill (Icon == CanoeIconBack ? X + U : X + Size - 3 * U,
-                Y + C - 3 * U, 2 * U, 6 * U, Color);
+  INTN X0, Y0, X1, Y1, Dx, Dy, Sx, Sy, Error, Twice;
+  UINTN U = MAX (2, Size / 18), C = Size / 2, R = Size * 3 / 8, I;
+#define ICON_LINE(_x0,_y0,_x1,_y1) do {                                    \
+    X0=(INTN)(_x0);Y0=(INTN)(_y0);X1=(INTN)(_x1);Y1=(INTN)(_y1);           \
+    Dx=X1>X0?X1-X0:X0-X1;Sx=X0<X1?1:-1;Dy=-(Y1>Y0?Y1-Y0:Y0-Y1);          \
+    Sy=Y0<Y1?1:-1;Error=Dx+Dy;                                             \
+    for(;;){SfbGfxFill((UINTN)X0,(UINTN)Y0,U,U,Color);if(X0==X1&&Y0==Y1)break;\
+      Twice=2*Error;if(Twice>=Dy){Error+=Dy;X0+=Sx;}if(Twice<=Dx){Error+=Dx;Y0+=Sy;}}\
+  } while(0)
+#define ICON_RECT(_l,_t,_r,_b) do { ICON_LINE(_l,_t,_r,_t); ICON_LINE(_r,_t,_r,_b); ICON_LINE(_r,_b,_l,_b); ICON_LINE(_l,_b,_l,_t); } while(0)
+#define ICON_DOT(_x,_y) SfbGfxFill((_x)-U,(_y)-U,3*U,3*U,Color)
+  if (Icon == CanoeIconNone || Size < 12) return;
+  if (Icon == CanoeIconBoot) {
+    ICON_LINE(X+Size/3,Y+Size/5,X+Size/3,Y+Size*4/5); ICON_LINE(X+Size/3,Y+Size/5,X+Size*4/5,Y+C); ICON_LINE(X+Size*4/5,Y+C,X+Size/3,Y+Size*4/5);
+  } else if (Icon == CanoeIconBack) {
+    ICON_LINE(X+Size*3/4,Y+Size/5,X+Size/4,Y+C); ICON_LINE(X+Size/4,Y+C,X+Size*3/4,Y+Size*4/5); ICON_LINE(X+Size/4,Y+C,X+Size*9/10,Y+C);
+  } else if (Icon == CanoeIconRestart) {
+    for(I=0;I<24;I++){INTN Px=(INTN)(X+C)+(INTN)R*mSfbCircleX[I]/1000;INTN Py=(INTN)(Y+C)+(INTN)R*mSfbCircleY[I]/1000;if(I>2)ICON_DOT((UINTN)Px,(UINTN)Py);} ICON_LINE(X+Size*3/4,Y+Size/8,X+Size*7/8,Y+Size/3); ICON_LINE(X+Size*3/4,Y+Size/8,X+Size*5/8,Y+Size/3);
+  } else if (Icon == CanoeIconPower) {
+    for(I=0;I<24;I++){INTN Px=(INTN)(X+C)+(INTN)R*mSfbCircleX[I]/1000;INTN Py=(INTN)(Y+C)+(INTN)R*mSfbCircleY[I]/1000;if(I>2&&I<22)ICON_DOT((UINTN)Px,(UINTN)Py);} ICON_LINE(X+C,Y+Size/10,X+C,Y+C);
   } else if (Icon == CanoeIconFile) {
-    SfbGfxFill (X + 2 * U, Y + U, Size - 4 * U, U, Color);
-    SfbGfxFill (X + 2 * U, Y + U, U, Size - 2 * U, Color);
-    SfbGfxFill (X + 2 * U, Y + Size - 2 * U, Size - 4 * U, U, Color);
-    SfbGfxFill (X + Size - 3 * U, Y + 3 * U, U, Size - 4 * U, Color);
+    ICON_LINE(X+Size/8,Y+Size/3,X+Size*2/5,Y+Size/3); ICON_LINE(X+Size*2/5,Y+Size/3,X+Size/2,Y+Size/5); ICON_LINE(X+Size/2,Y+Size/5,X+Size*7/8,Y+Size/5); ICON_RECT(X+Size/8,Y+Size/3,X+Size*7/8,Y+Size*4/5);
   } else if (Icon == CanoeIconUsb) {
-    SfbGfxFill (X + C - U / 2, Y + U, U, Size - 3 * U, Color);
-    SfbGfxFill (X + C, Y + 3 * U, 3 * U, U, Color);
-    SfbGfxFill (X + C - 3 * U, Y + 5 * U, 3 * U, U, Color);
-    SfbGfxFill (X + C - U, Y + Size - 2 * U, 3 * U, U, Color);
-  } else if (Icon == CanoeIconLock || Icon == CanoeIconPin) {
-    SfbGfxFill (X + 2 * U, Y + 4 * U, Size - 4 * U, Size - 5 * U, Color);
-    SfbGfxFill (X + 3 * U, Y + U, U, 4 * U, Color);
-    SfbGfxFill (X + Size - 4 * U, Y + U, U, 4 * U, Color);
-    SfbGfxFill (X + 3 * U, Y + U, Size - 6 * U, U, Color);
-  } else if (Icon == CanoeIconGame) {
-    SfbGfxFill (X + U, Y + 3 * U, Size - 2 * U, 4 * U, Color);
-    SfbGfxFill (X + 3 * U, Y + 2 * U, U, 6 * U, Color);
-    SfbGfxFill (X + 2 * U, Y + 4 * U, 3 * U, U, Color);
-    SfbGfxFill (X + Size - 4 * U, Y + 4 * U, U, U, &mSfbColorBackground);
-  } else if (Icon == CanoeIconWarning) {
-    SfbGfxFill (X + C - U / 2, Y + U, U, 5 * U, Color);
-    SfbGfxFill (X + C - U / 2, Y + 7 * U, U, U, Color);
+    ICON_LINE(X+C,Y+Size/8,X+C,Y+Size*4/5); ICON_LINE(X+C,Y+Size*2/5,X+Size*3/4,Y+Size/4); ICON_LINE(X+C,Y+Size*3/5,X+Size/4,Y+Size/2); ICON_DOT(X+C,Y+Size*4/5); ICON_DOT(X+Size/4,Y+Size/2); ICON_RECT(X+Size*3/4-U,Y+Size/4-U,X+Size*3/4+U,Y+Size/4+U);
+  } else if (Icon == CanoeIconLock) {
+    ICON_RECT(X+Size/5,Y+Size*2/5,X+Size*4/5,Y+Size*4/5); ICON_LINE(X+Size/3,Y+Size*2/5,X+Size/3,Y+Size/4); ICON_LINE(X+Size/3,Y+Size/4,X+Size*2/3,Y+Size/4); ICON_LINE(X+Size*2/3,Y+Size/4,X+Size*2/3,Y+Size*2/5); ICON_DOT(X+C,Y+Size*3/5);
+  } else if (Icon == CanoeIconPin) {
+    ICON_RECT(X+Size/5,Y+Size/6,X+Size*4/5,Y+Size*5/6); for(I=0;I<9;I++)ICON_DOT(X+Size/3+(I%3)*Size/6,Y+Size/3+(I/3)*Size/6);
+  } else if (Icon == CanoeIconSettings) {
+    for(I=0;I<3;I++){UINTN Ly=Y+Size/4+I*Size/4;ICON_LINE(X+Size/6,Ly,X+Size*5/6,Ly);ICON_DOT(X+(I==1?Size*2/3:Size/3),Ly);}
   } else if (Icon == CanoeIconPalette) {
-    SfbGfxFill (X + U, Y + 2 * U, Size - 2 * U, 5 * U, Color);
-    SfbGfxFill (X + 3 * U, Y + 3 * U, U, U, &mSfbColorBackground);
-    SfbGfxFill (X + 5 * U, Y + 3 * U, U, U, &mSfbColorBackground);
+    for(I=0;I<24;I++){INTN Px=(INTN)(X+C)+(INTN)R*mSfbCircleX[I]/1000;INTN Py=(INTN)(Y+C)+(INTN)R*mSfbCircleY[I]/1000;ICON_DOT((UINTN)Px,(UINTN)Py);} ICON_DOT(X+Size/3,Y+Size/3); ICON_DOT(X+Size*2/3,Y+Size/3); ICON_DOT(X+Size/3,Y+Size*2/3);
+  } else if (Icon == CanoeIconLanguage) {
+    ICON_LINE(X+Size/6,Y+Size*4/5,X+Size/3,Y+Size/5); ICON_LINE(X+Size/3,Y+Size/5,X+Size/2,Y+Size*4/5); ICON_LINE(X+Size/4,Y+Size*3/5,X+Size*5/12,Y+Size*3/5); ICON_LINE(X+Size*3/5,Y+Size/3,X+Size*5/6,Y+Size/3); ICON_LINE(X+Size*3/5,Y+Size/2,X+Size*5/6,Y+Size/2); ICON_LINE(X+Size*3/5,Y+Size*2/3,X+Size*5/6,Y+Size*2/3);
+  } else if (Icon == CanoeIconGame) {
+    ICON_RECT(X+Size/8,Y+Size/3,X+Size*7/8,Y+Size*3/4); ICON_LINE(X+Size/4,Y+C,X+Size/2,Y+C); ICON_LINE(X+Size*3/8,Y+Size*3/8,X+Size*3/8,Y+Size*5/8); ICON_DOT(X+Size*2/3,Y+Size*5/12); ICON_DOT(X+Size*3/4,Y+Size*7/12);
+  } else if (Icon == CanoeIconInfo) {
+    for(I=0;I<24;I++){INTN Px=(INTN)(X+C)+(INTN)R*mSfbCircleX[I]/1000;INTN Py=(INTN)(Y+C)+(INTN)R*mSfbCircleY[I]/1000;ICON_DOT((UINTN)Px,(UINTN)Py);} ICON_DOT(X+C,Y+Size/3); ICON_LINE(X+C,Y+Size/2,X+C,Y+Size*3/4);
+  } else if (Icon == CanoeIconWarning) {
+    ICON_LINE(X+C,Y+Size/8,X+Size*7/8,Y+Size*4/5); ICON_LINE(X+Size*7/8,Y+Size*4/5,X+Size/8,Y+Size*4/5); ICON_LINE(X+Size/8,Y+Size*4/5,X+C,Y+Size/8); ICON_LINE(X+C,Y+Size/3,X+C,Y+Size*3/5); ICON_DOT(X+C,Y+Size*7/10);
   } else {
-    /* Settings/tool/language/info use a stable cross-in-box glyph. */
-    SfbGfxFill (X + U, Y + U, Size - 2 * U, U, Color);
-    SfbGfxFill (X + U, Y + Size - 2 * U, Size - 2 * U, U, Color);
-    SfbGfxFill (X + U, Y + U, U, Size - 2 * U, Color);
-    SfbGfxFill (X + Size - 2 * U, Y + U, U, Size - 2 * U, Color);
-    SfbGfxFill (X + C - U / 2, Y + 3 * U, U, 3 * U, Color);
+    ICON_LINE(X+Size/5,Y+Size/5,X+Size*4/5,Y+Size*4/5); ICON_LINE(X+Size*4/5,Y+Size/5,X+Size/5,Y+Size*4/5); ICON_DOT(X+Size/5,Y+Size/5); ICON_DOT(X+Size*4/5,Y+Size*4/5);
   }
+#undef ICON_DOT
+#undef ICON_RECT
+#undef ICON_LINE
 }
 
 STATIC
@@ -592,9 +608,8 @@ SfbGfxText (IN UINTN X, IN UINTN Y, IN UINT16 Size,
   Cursor = 0;
   for (Index = 0; Text[Index] != L'\0' && Cursor < Width; Index++) {
     Glyph = SfbFindGlyph (Text[Index]);
-    if (Glyph == NULL) {
-      continue;
-    }
+    if (Glyph == NULL) Glyph = SfbFindGlyph (L'?');
+    if (Glyph == NULL) continue;
     Advance = ((UINTN)Glyph->Advance * Size + SFB_FONT_HEIGHT - 1) /
               SFB_FONT_HEIGHT;
     for (Dy = 0; Dy < Height; Dy++) {
@@ -657,10 +672,22 @@ SfbProtocolDrawText (IN CANOE_UI_PROTOCOL *This, IN UINTN X, IN UINTN Y,
   return SfbGfxText (X, Y, Size, Text, Color);
 }
 
+STATIC EFI_STATUS EFIAPI
+SfbProtocolDrawIcon (IN CANOE_UI_PROTOCOL *This, IN UINTN X, IN UINTN Y,
+                     IN UINTN Size, IN UINTN Icon,
+                     IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color)
+{
+  (VOID)This;
+  if (Icon > CanoeIconWarning || Color == NULL) return EFI_INVALID_PARAMETER;
+  SfbGfxIcon (X, Y, Size, (CANOE_UI_ICON)Icon, Color);
+  return EFI_SUCCESS;
+}
+
 STATIC CANOE_UI_PROTOCOL mSfbUiProtocol = {
   CANOE_UI_PROTOCOL_REVISION,
   SfbProtocolMeasureText,
-  SfbProtocolDrawText
+  SfbProtocolDrawText,
+  SfbProtocolDrawIcon
 };
 
 /* ChargerEx exposes voltage rather than fuel-gauge SOC on this open-source

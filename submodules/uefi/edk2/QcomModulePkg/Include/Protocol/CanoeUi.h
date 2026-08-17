@@ -5,7 +5,7 @@
 #include <Uefi.h>
 #include <Protocol/GraphicsOutput.h>
 
-#define CANOE_UI_PROTOCOL_REVISION  0x00010000ULL
+#define CANOE_UI_PROTOCOL_REVISION  0x00010001ULL
 
 typedef struct _CANOE_UI_PROTOCOL CANOE_UI_PROTOCOL;
 
@@ -24,10 +24,20 @@ typedef EFI_STATUS (EFIAPI *CANOE_UI_DRAW_TEXT)(
   IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL     *Color
   );
 
+typedef EFI_STATUS (EFIAPI *CANOE_UI_DRAW_ICON)(
+  IN CANOE_UI_PROTOCOL                 *This,
+  IN UINTN                              X,
+  IN UINTN                              Y,
+  IN UINTN                              Size,
+  IN UINTN                              Icon,
+  IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL     *Color
+  );
+
 struct _CANOE_UI_PROTOCOL {
   UINT64                 Revision;
   CANOE_UI_MEASURE_TEXT  MeasureText;
   CANOE_UI_DRAW_TEXT     DrawText;
+  CANOE_UI_DRAW_ICON     DrawIcon;
 };
 
 extern EFI_GUID gCanoeUiProtocolGuid;

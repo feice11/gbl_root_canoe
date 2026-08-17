@@ -94,48 +94,8 @@ VOID
 AtGfxIcon (IN UINTN X, IN UINTN Y, IN UINTN Size, IN CANOE_UI_ICON Icon,
            IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color)
 {
-  UINTN U = MAX (2, Size / 9);
-  UINTN C = Size / 2;
-
-  if (Icon == CanoeIconNone) return;
-  if (Icon == CanoeIconBoot || Icon == CanoeIconRestart || Icon == CanoeIconBack) {
-    AtGfxFill (X + U, Y + C - U, Size - 2 * U, 2 * U, Color);
-    AtGfxFill (Icon == CanoeIconBack ? X + U : X + Size - 3 * U,
-               Y + C - 3 * U, 2 * U, 6 * U, Color);
-  } else if (Icon == CanoeIconFile) {
-    AtGfxFill (X + 2 * U, Y + U, Size - 4 * U, U, Color);
-    AtGfxFill (X + 2 * U, Y + U, U, Size - 2 * U, Color);
-    AtGfxFill (X + 2 * U, Y + Size - 2 * U, Size - 4 * U, U, Color);
-    AtGfxFill (X + Size - 3 * U, Y + 3 * U, U, Size - 4 * U, Color);
-  } else if (Icon == CanoeIconUsb) {
-    AtGfxFill (X + C - U / 2, Y + U, U, Size - 3 * U, Color);
-    AtGfxFill (X + C, Y + 3 * U, 3 * U, U, Color);
-    AtGfxFill (X + C - 3 * U, Y + 5 * U, 3 * U, U, Color);
-    AtGfxFill (X + C - U, Y + Size - 2 * U, 3 * U, U, Color);
-  } else if (Icon == CanoeIconLock || Icon == CanoeIconPin) {
-    AtGfxFill (X + 2 * U, Y + 4 * U, Size - 4 * U, Size - 5 * U, Color);
-    AtGfxFill (X + 3 * U, Y + U, U, 4 * U, Color);
-    AtGfxFill (X + Size - 4 * U, Y + U, U, 4 * U, Color);
-    AtGfxFill (X + 3 * U, Y + U, Size - 6 * U, U, Color);
-  } else if (Icon == CanoeIconGame) {
-    AtGfxFill (X + U, Y + 3 * U, Size - 2 * U, 4 * U, Color);
-    AtGfxFill (X + 3 * U, Y + 2 * U, U, 6 * U, Color);
-    AtGfxFill (X + 2 * U, Y + 4 * U, 3 * U, U, Color);
-    AtGfxFill (X + Size - 4 * U, Y + 4 * U, U, U, &mAtBackground);
-  } else if (Icon == CanoeIconWarning) {
-    AtGfxFill (X + C - U / 2, Y + U, U, 5 * U, Color);
-    AtGfxFill (X + C - U / 2, Y + 7 * U, U, U, Color);
-  } else if (Icon == CanoeIconPalette) {
-    AtGfxFill (X + U, Y + 2 * U, Size - 2 * U, 5 * U, Color);
-    AtGfxFill (X + 3 * U, Y + 3 * U, U, U, &mAtBackground);
-    AtGfxFill (X + 5 * U, Y + 3 * U, U, U, &mAtBackground);
-  } else {
-    AtGfxFill (X + U, Y + U, Size - 2 * U, U, Color);
-    AtGfxFill (X + U, Y + Size - 2 * U, Size - 2 * U, U, Color);
-    AtGfxFill (X + U, Y + U, U, Size - 2 * U, Color);
-    AtGfxFill (X + Size - 2 * U, Y + U, U, Size - 2 * U, Color);
-    AtGfxFill (X + C - U / 2, Y + 3 * U, U, 3 * U, Color);
-  }
+  if (mAtSharedUi != NULL && mAtSharedUi->DrawIcon != NULL)
+    (VOID)mAtSharedUi->DrawIcon (mAtSharedUi, X, Y, Size, Icon, Color);
 }
 
 STATIC
