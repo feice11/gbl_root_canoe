@@ -19,7 +19,6 @@
 #include <Library/MemoryAllocationLib.h>
 #include <Library/PrintLib.h>
 #include <Library/ShutdownServices.h>
-#include <Library/TimerLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
@@ -365,7 +364,7 @@ SfbAnimateSelectionCard (IN UINTN X, IN UINTN Y, IN UINTN Width, IN UINTN Height
     EFI_GRAPHICS_OUTPUT_BLT_PIXEL Color =
       SfbBlendColor (&mSfbColorSurface, &mSfbColorPrimary, Ease);
     SfbGfxFill (X, Y, Width, Height, &Color);
-    if (Frame + 1 < SFB_SELECTION_FRAMES) MicroSecondDelay (SFB_SELECTION_FRAME_US);
+    if (Frame + 1 < SFB_SELECTION_FRAMES) gBS->Stall (SFB_SELECTION_FRAME_US);
   }
   mSfbSelectionAnimated = TRUE;
 }

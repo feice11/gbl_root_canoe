@@ -13,7 +13,6 @@
 #include <Library/DebugLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/PrintLib.h>
-#include <Library/TimerLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
@@ -105,7 +104,7 @@ AtAnimateSelectionCard (IN UINTN X, IN UINTN Y, IN UINTN Width, IN UINTN Height)
     EFI_GRAPHICS_OUTPUT_BLT_PIXEL Color =
       AtBlendColor (&mAtSurface, &mAtPrimary, Ease);
     AtGfxFill (X, Y, Width, Height, &Color);
-    if (Frame + 1 < AT_SELECTION_FRAMES) MicroSecondDelay (AT_SELECTION_FRAME_US);
+    if (Frame + 1 < AT_SELECTION_FRAMES) gBS->Stall (AT_SELECTION_FRAME_US);
   }
   mAtSelectionAnimated = TRUE;
 }
