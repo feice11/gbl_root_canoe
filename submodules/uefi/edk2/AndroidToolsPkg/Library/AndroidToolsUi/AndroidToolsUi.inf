@@ -27,6 +27,7 @@
   DebugLib
   MemoryAllocationLib
   PrintLib
+  TimerLib
   UefiBootServicesTableLib
   UefiLib
   UefiRuntimeServicesTableLib

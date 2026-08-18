@@ -13,6 +13,7 @@
 #include <Library/DebugLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/PrintLib.h>
+#include <Library/TimerLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
@@ -49,6 +50,10 @@ STATIC UINTN                         mAtVisibleRows = CANOE_UI_VISIBLE_MIN;
 STATIC UINTN                         mAtClockOffsetSeconds = 0;
 STATIC BOOLEAN                       mAtClockValid = FALSE;
 STATIC BOOLEAN                       mAtDescriptions = TRUE;
+STATIC BOOLEAN                       mAtSelectionAnimated = FALSE;
+
+#define AT_SELECTION_FRAMES    4
+#define AT_SELECTION_FRAME_US  2500
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mAtBackground;
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mAtSurface;
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mAtPrimary;
@@ -67,6 +72,42 @@ AtGfxFill (IN UINTN X, IN UINTN Y, IN UINTN Width, IN UINTN Height,
     return;
   }
   mAtGop->Blt (mAtGop, Color, EfiBltVideoFill, 0, 0, X, Y, Width, Height, 0);
+}
+
+STATIC
+EFI_GRAPHICS_OUTPUT_BLT_PIXEL
+AtBlendColor (IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *From,
+              IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *To,
+              IN UINTN Amount)
+{
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL Result;
+  UINTN Inverse;
+
+  if (Amount > 256) Amount = 256;
+  Inverse = 256 - Amount;
+  Result.Blue = (UINT8)((From->Blue * Inverse + To->Blue * Amount + 128) / 256);
+  Result.Green = (UINT8)((From->Green * Inverse + To->Green * Amount + 128) / 256);
+  Result.Red = (UINT8)((From->Red * Inverse + To->Red * Amount + 128) / 256);
+  Result.Reserved = 0;
+  return Result;
+}
+
+STATIC
+VOID
+AtAnimateSelectionCard (IN UINTN X, IN UINTN Y, IN UINTN Width, IN UINTN Height)
+{
+  UINTN Frame;
+
+  if (!mAtGraphical || mAtSelectionAnimated) return;
+  for (Frame = 0; Frame < AT_SELECTION_FRAMES; ++Frame) {
+    UINTN Linear = (Frame * 256) / (AT_SELECTION_FRAMES - 1);
+    UINTN Ease = 256 - (((256 - Linear) * (256 - Linear)) / 256);
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL Color =
+      AtBlendColor (&mAtSurface, &mAtPrimary, Ease);
+    AtGfxFill (X, Y, Width, Height, &Color);
+    if (Frame + 1 < AT_SELECTION_FRAMES) MicroSecondDelay (AT_SELECTION_FRAME_US);
+  }
+  mAtSelectionAnimated = TRUE;
 }
 
 STATIC
@@ -582,6 +623,7 @@ AtUiBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
       ContentTop = mAtSafeTop + CANOE_UI_HEADER_HEIGHT + 34;
     }
     mAtY = ContentTop;
+    mAtSelectionAnimated = FALSE;
     Available = (Height > ContentTop + CANOE_UI_FOOTER_HEIGHT + 20)
                   ? Height - ContentTop - CANOE_UI_FOOTER_HEIGHT - 20 : 0;
     mAtRowStep = (mAtVisibleRows != 0) ? Available / mAtVisibleRows : 0;
@@ -732,8 +774,13 @@ AtUiDrawRowIcon (IN BOOLEAN Selected, IN CANOE_UI_ICON Icon,
     TextSize = (UINT16)MIN ((UINTN)TextSize,
                             MAX ((UINTN)20, mAtRowHeight - 16));
     TextY = mAtY + (mAtRowHeight - TextSize) / 2;
-    AtGfxFill (CANOE_UI_SIDE_MARGIN, mAtY, CardWidth, mAtRowHeight,
-               Selected ? &mAtPrimary : &mAtSurface);
+    if (Selected) {
+      AtAnimateSelectionCard (CANOE_UI_SIDE_MARGIN, mAtY,
+                              CardWidth, mAtRowHeight);
+    } else {
+      AtGfxFill (CANOE_UI_SIDE_MARGIN, mAtY, CardWidth, mAtRowHeight,
+                 &mAtSurface);
+    }
     if (!Selected) {
       AtGfxFill (CANOE_UI_SIDE_MARGIN, mAtY, 4,
                  mAtRowHeight, &mAtDisabled);

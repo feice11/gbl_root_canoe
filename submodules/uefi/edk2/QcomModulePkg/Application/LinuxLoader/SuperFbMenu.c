@@ -19,6 +19,7 @@
 #include <Library/MemoryAllocationLib.h>
 #include <Library/PrintLib.h>
 #include <Library/ShutdownServices.h>
+#include <Library/TimerLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
@@ -59,6 +60,10 @@ STATIC UINTN                         mSfbRowStep = 120;
 STATIC UINTN                         mSfbVisibleRows = CANOE_UI_VISIBLE_MIN;
 STATIC BOOLEAN                       mSfbClockCalibrationLoaded = FALSE;
 STATIC UINTN                         mSfbClockOffsetSeconds = 0;
+STATIC BOOLEAN                       mSfbSelectionAnimated = FALSE;
+
+#define SFB_SELECTION_FRAMES    4
+#define SFB_SELECTION_FRAME_US  2500
 
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorBackground = { 0x18, 0x12, 0x0d, 0x00 };
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorSurface    = { 0x2d, 0x25, 0x1d, 0x00 };
@@ -327,6 +332,42 @@ SfbGfxFill (IN UINTN X, IN UINTN Y, IN UINTN Width, IN UINTN Height,
   }
   mSfbGop->Blt (mSfbGop, Color, EfiBltVideoFill, 0, 0, X, Y,
                 Width, Height, 0);
+}
+
+STATIC
+EFI_GRAPHICS_OUTPUT_BLT_PIXEL
+SfbBlendColor (IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *From,
+               IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *To,
+               IN UINTN Amount)
+{
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL Result;
+  UINTN Inverse;
+
+  if (Amount > 256) Amount = 256;
+  Inverse = 256 - Amount;
+  Result.Blue = (UINT8)((From->Blue * Inverse + To->Blue * Amount + 128) / 256);
+  Result.Green = (UINT8)((From->Green * Inverse + To->Green * Amount + 128) / 256);
+  Result.Red = (UINT8)((From->Red * Inverse + To->Red * Amount + 128) / 256);
+  Result.Reserved = 0;
+  return Result;
+}
+
+STATIC
+VOID
+SfbAnimateSelectionCard (IN UINTN X, IN UINTN Y, IN UINTN Width, IN UINTN Height)
+{
+  UINTN Frame;
+
+  if (!mSfbGraphical || mSfbSelectionAnimated) return;
+  for (Frame = 0; Frame < SFB_SELECTION_FRAMES; ++Frame) {
+    UINTN Linear = (Frame * 256) / (SFB_SELECTION_FRAMES - 1);
+    UINTN Ease = 256 - (((256 - Linear) * (256 - Linear)) / 256);
+    EFI_GRAPHICS_OUTPUT_BLT_PIXEL Color =
+      SfbBlendColor (&mSfbColorSurface, &mSfbColorPrimary, Ease);
+    SfbGfxFill (X, Y, Width, Height, &Color);
+    if (Frame + 1 < SFB_SELECTION_FRAMES) MicroSecondDelay (SFB_SELECTION_FRAME_US);
+  }
+  mSfbSelectionAnimated = TRUE;
 }
 
 STATIC
@@ -1186,6 +1227,7 @@ SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle)
       ContentTop = mSfbSafeTop + CANOE_UI_HEADER_HEIGHT + 34;
     }
     mSfbGfxY = ContentTop;
+    mSfbSelectionAnimated = FALSE;
     Available = (Height > ContentTop + CANOE_UI_FOOTER_HEIGHT + 20)
                   ? Height - ContentTop - CANOE_UI_FOOTER_HEIGHT - 20 : 0;
     mSfbRowStep = (mSfbVisibleRows != 0) ? Available / mSfbVisibleRows : 0;
@@ -1354,8 +1396,13 @@ SfbDrawRowIcon (IN BOOLEAN Selected, IN CANOE_UI_ICON Icon,
                             MAX ((UINTN)20, mSfbRowHeight - 16));
     UINTN  TextY = mSfbGfxY + (mSfbRowHeight - TextSize) / 2;
 
-    SfbGfxFill (CANOE_UI_SIDE_MARGIN, mSfbGfxY, CardWidth, mSfbRowHeight,
-                Selected ? &mSfbColorPrimary : &mSfbColorSurface);
+    if (Selected) {
+      SfbAnimateSelectionCard (CANOE_UI_SIDE_MARGIN, mSfbGfxY,
+                               CardWidth, mSfbRowHeight);
+    } else {
+      SfbGfxFill (CANOE_UI_SIDE_MARGIN, mSfbGfxY, CardWidth, mSfbRowHeight,
+                  &mSfbColorSurface);
+    }
     if (!Selected) {
       SfbGfxFill (CANOE_UI_SIDE_MARGIN, mSfbGfxY, 4,
                   mSfbRowHeight, &mSfbColorDisabled);
