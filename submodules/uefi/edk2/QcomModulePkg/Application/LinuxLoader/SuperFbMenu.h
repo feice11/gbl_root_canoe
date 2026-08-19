@@ -247,6 +247,12 @@ SfbStoreWrite (IN UINTN Slot, IN CONST CHAR8 *Text);
 EFI_STATUS
 SfbStoreRead (IN UINTN Slot, OUT CHAR8 *Out, IN UINTN OutBytes);
 
+EFI_STATUS
+SfbStoreWriteSnapshot (IN CONST VOID *Data, IN UINTN DataBytes);
+
+EFI_STATUS
+SfbCaptureScreen (VOID);
+
 /* ---- SuperFbEntries.c: entry list, persistence and launching ------------ */
 
 VOID

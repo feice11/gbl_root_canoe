@@ -13,6 +13,7 @@
 #include "SuperFbFont.h"
 #include "SuperFbImage.h"
 #include "CanoeUiStyle.h"
+#include "CanoeIcons.h"
 
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
@@ -100,6 +101,8 @@ STATIC BOOLEAN  mSfbDescriptions = TRUE;
 STATIC UINTN    mSfbBootVisual = 1;
 /* 0 = top, 1 = center, 2 = bottom. */
 STATIC UINTN    mSfbBootPosition = 1;
+/* 0=off, 1..6 preset entrances, 7=random. */
+STATIC UINTN    mSfbArtAnimation = 7;
 STATIC CHAR8    mSfbBootAssetLabel[192] = "";
 STATIC CHAR8    mSfbBootAssetPath[768] = "";
 STATIC CHAR8    mSfbPin[5] = "1234";
@@ -152,7 +155,7 @@ SfbLoadSettings (VOID)
 
   if (!EFI_ERROR (SfbStoreRead (SFB_STORE_SETTINGS, Record,
                                 sizeof (Record))) &&
-      AsciiStrnCmp (Record, "SFC5|", 5) == 0 &&
+      AsciiStrnCmp (Record, "SFC6|", 5) == 0 &&
       Record[5] >= '0' && Record[5] < '0' + CANOE_UI_BASE_COUNT &&
       Record[6] == '|' &&
       Record[7] >= '0' && Record[7] < '0' + CANOE_UI_ACCENT_COUNT &&
@@ -161,7 +164,8 @@ SfbLoadSettings (VOID)
       Record[12] == '|' && (Record[13] == '0' || Record[13] == '1') &&
       Record[14] == '|' && Record[15] >= '0' && Record[15] <= '2' &&
       Record[16] == '|' && Record[17] >= '0' && Record[17] <= '2' &&
-      Record[18] == '|') {
+      Record[18] == '|' && Record[19] >= '0' && Record[19] <= '7' &&
+      Record[20] == '|') {
     CONST CHAR8 *Cursor;
     UINTN Out;
     mSfbBase = Record[5] - '0';
@@ -171,7 +175,8 @@ SfbLoadSettings (VOID)
     mSfbDescriptions = (BOOLEAN)(Record[13] == '1');
     mSfbBootVisual = Record[15] - '0';
     mSfbBootPosition = Record[17] - '0';
-    Cursor = Record + 19;
+    mSfbArtAnimation = Record[19] - '0';
+    Cursor = Record + 21;
     for (Index = 0; Index < 4; Index++) {
       if (Cursor[Index] < '0' || Cursor[Index] > '9') {
         mSfbLockMode = SFB_LOCK_OFF;
@@ -191,6 +196,25 @@ SfbLoadSettings (VOID)
     if (*Cursor == '|') Cursor++;
     AsciiStrnCpyS (mSfbBootAssetPath, sizeof (mSfbBootAssetPath), Cursor,
                    sizeof (mSfbBootAssetPath) - 1);
+  } else if (AsciiStrnCmp (Record, "SFC5|", 5) == 0 &&
+      Record[5] >= '0' && Record[5] < '0' + CANOE_UI_BASE_COUNT &&
+      Record[6] == '|' && Record[7] >= '0' &&
+      Record[7] < '0' + CANOE_UI_ACCENT_COUNT && Record[8] == '|' &&
+      Record[9] >= '0' && Record[9] <= '2' && Record[10] == '|' &&
+      (Record[11] == '0' || Record[11] == '1') && Record[12] == '|' &&
+      (Record[13] == '0' || Record[13] == '1') && Record[14] == '|' &&
+      Record[15] >= '0' && Record[15] <= '2' && Record[16] == '|' &&
+      Record[17] >= '0' && Record[17] <= '2' && Record[18] == '|') {
+    CONST CHAR8 *Cursor;
+    UINTN Out;
+    mSfbBase=Record[5]-'0';mSfbAccent=Record[7]-'0';mSfbLockMode=Record[9]-'0';
+    mSfbLanguage=Record[11]-'0';mSfbDescriptions=(BOOLEAN)(Record[13]=='1');
+    mSfbBootVisual=Record[15]-'0';mSfbBootPosition=Record[17]-'0';Cursor=Record+19;
+    for(Index=0;Index<4;Index++){if(Cursor[Index]<'0'||Cursor[Index]>'9'){mSfbLockMode=SFB_LOCK_OFF;break;}mSfbPin[Index]=Cursor[Index];}
+    mSfbPin[4]='\0';Cursor+=4;if(*Cursor=='|')Cursor++;Out=0;
+    while(*Cursor!='\0'&&*Cursor!='|'&&Out+1<sizeof(mSfbBootAssetLabel))mSfbBootAssetLabel[Out++]=*Cursor++;
+    mSfbBootAssetLabel[Out]='\0';if(*Cursor=='|')Cursor++;
+    AsciiStrnCpyS(mSfbBootAssetPath,sizeof(mSfbBootAssetPath),Cursor,sizeof(mSfbBootAssetPath)-1);
   } else if (AsciiStrnCmp (Record, "SFC4|", 5) == 0 &&
       Record[5] >= '0' && Record[5] < '0' + 4 &&
       Record[6] == '|' && Record[7] >= '0' && Record[7] <= '2' &&
@@ -290,10 +314,11 @@ SfbSaveSettings (VOID)
 {
   CHAR8  Record[SFB_STORE_SLOT_BYTES];
 
-  AsciiSPrint (Record, sizeof (Record), "SFC5|%u|%u|%u|%u|%u|%u|%u|%a|%a|%a",
+  AsciiSPrint (Record, sizeof (Record), "SFC6|%u|%u|%u|%u|%u|%u|%u|%u|%a|%a|%a",
                (UINT32)mSfbBase, (UINT32)mSfbAccent, (UINT32)mSfbLockMode,
                (UINT32)mSfbLanguage, mSfbDescriptions ? 1U : 0U,
                (UINT32)mSfbBootVisual, (UINT32)mSfbBootPosition,
+               (UINT32)mSfbArtAnimation,
                mSfbPin, mSfbBootAssetLabel, mSfbBootAssetPath);
   return SfbStoreWrite (SFB_STORE_SETTINGS, Record);
 }
@@ -553,66 +578,54 @@ VOID
 SfbGfxIcon (IN UINTN X, IN UINTN Y, IN UINTN Size, IN CANOE_UI_ICON Icon,
             IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color);
 
-STATIC CONST INT16 mSfbCircleX[24] = {
-  0,259,500,707,866,966,1000,966,866,707,500,259,
-  0,-259,-500,-707,-866,-966,-1000,-966,-866,-707,-500,-259
-};
-STATIC CONST INT16 mSfbCircleY[24] = {
-  -1000,-966,-866,-707,-500,-259,0,259,500,707,866,966,
-  1000,966,866,707,500,259,0,-259,-500,-707,-866,-966
-};
-
 STATIC
 VOID
 SfbGfxIcon (IN UINTN X, IN UINTN Y, IN UINTN Size, IN CANOE_UI_ICON Icon,
             IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Color)
 {
-  INTN X0, Y0, X1, Y1, Dx, Dy, Sx, Sy, Error, Twice;
-  UINTN U = MAX (2, Size / 18), C = Size / 2, R = Size * 3 / 8, I;
-#define ICON_LINE(_x0,_y0,_x1,_y1) do {                                    \
-    X0=(INTN)(_x0);Y0=(INTN)(_y0);X1=(INTN)(_x1);Y1=(INTN)(_y1);           \
-    Dx=X1>X0?X1-X0:X0-X1;Sx=X0<X1?1:-1;Dy=-(Y1>Y0?Y1-Y0:Y0-Y1);          \
-    Sy=Y0<Y1?1:-1;Error=Dx+Dy;                                             \
-    for(;;){SfbGfxFill((UINTN)X0,(UINTN)Y0,U,U,Color);if(X0==X1&&Y0==Y1)break;\
-      Twice=2*Error;if(Twice>=Dy){Error+=Dy;X0+=Sx;}if(Twice<=Dx){Error+=Dx;Y0+=Sy;}}\
-  } while(0)
-#define ICON_RECT(_l,_t,_r,_b) do { ICON_LINE(_l,_t,_r,_t); ICON_LINE(_r,_t,_r,_b); ICON_LINE(_r,_b,_l,_b); ICON_LINE(_l,_b,_l,_t); } while(0)
-#define ICON_DOT(_x,_y) SfbGfxFill((_x)-U,(_y)-U,3*U,3*U,Color)
-  if (Icon == CanoeIconNone || Size < 12) return;
-  if (Icon == CanoeIconBoot) {
-    ICON_LINE(X+Size/3,Y+Size/5,X+Size/3,Y+Size*4/5); ICON_LINE(X+Size/3,Y+Size/5,X+Size*4/5,Y+C); ICON_LINE(X+Size*4/5,Y+C,X+Size/3,Y+Size*4/5);
-  } else if (Icon == CanoeIconBack) {
-    ICON_LINE(X+Size*3/4,Y+Size/5,X+Size/4,Y+C); ICON_LINE(X+Size/4,Y+C,X+Size*3/4,Y+Size*4/5); ICON_LINE(X+Size/4,Y+C,X+Size*9/10,Y+C);
-  } else if (Icon == CanoeIconRestart) {
-    for(I=0;I<24;I++){INTN Px=(INTN)(X+C)+(INTN)R*mSfbCircleX[I]/1000;INTN Py=(INTN)(Y+C)+(INTN)R*mSfbCircleY[I]/1000;if(I>2)ICON_DOT((UINTN)Px,(UINTN)Py);} ICON_LINE(X+Size*3/4,Y+Size/8,X+Size*7/8,Y+Size/3); ICON_LINE(X+Size*3/4,Y+Size/8,X+Size*5/8,Y+Size/3);
-  } else if (Icon == CanoeIconPower) {
-    for(I=0;I<24;I++){INTN Px=(INTN)(X+C)+(INTN)R*mSfbCircleX[I]/1000;INTN Py=(INTN)(Y+C)+(INTN)R*mSfbCircleY[I]/1000;if(I>2&&I<22)ICON_DOT((UINTN)Px,(UINTN)Py);} ICON_LINE(X+C,Y+Size/10,X+C,Y+C);
-  } else if (Icon == CanoeIconFile) {
-    ICON_LINE(X+Size/8,Y+Size/3,X+Size*2/5,Y+Size/3); ICON_LINE(X+Size*2/5,Y+Size/3,X+Size/2,Y+Size/5); ICON_LINE(X+Size/2,Y+Size/5,X+Size*7/8,Y+Size/5); ICON_RECT(X+Size/8,Y+Size/3,X+Size*7/8,Y+Size*4/5);
-  } else if (Icon == CanoeIconUsb) {
-    ICON_LINE(X+C,Y+Size/8,X+C,Y+Size*4/5); ICON_LINE(X+C,Y+Size*2/5,X+Size*3/4,Y+Size/4); ICON_LINE(X+C,Y+Size*3/5,X+Size/4,Y+Size/2); ICON_DOT(X+C,Y+Size*4/5); ICON_DOT(X+Size/4,Y+Size/2); ICON_RECT(X+Size*3/4-U,Y+Size/4-U,X+Size*3/4+U,Y+Size/4+U);
-  } else if (Icon == CanoeIconLock) {
-    ICON_RECT(X+Size/5,Y+Size*2/5,X+Size*4/5,Y+Size*4/5); ICON_LINE(X+Size/3,Y+Size*2/5,X+Size/3,Y+Size/4); ICON_LINE(X+Size/3,Y+Size/4,X+Size*2/3,Y+Size/4); ICON_LINE(X+Size*2/3,Y+Size/4,X+Size*2/3,Y+Size*2/5); ICON_DOT(X+C,Y+Size*3/5);
-  } else if (Icon == CanoeIconPin) {
-    ICON_RECT(X+Size/5,Y+Size/6,X+Size*4/5,Y+Size*5/6); for(I=0;I<9;I++)ICON_DOT(X+Size/3+(I%3)*Size/6,Y+Size/3+(I/3)*Size/6);
-  } else if (Icon == CanoeIconSettings) {
-    for(I=0;I<3;I++){UINTN Ly=Y+Size/4+I*Size/4;ICON_LINE(X+Size/6,Ly,X+Size*5/6,Ly);ICON_DOT(X+(I==1?Size*2/3:Size/3),Ly);}
-  } else if (Icon == CanoeIconPalette) {
-    for(I=0;I<24;I++){INTN Px=(INTN)(X+C)+(INTN)R*mSfbCircleX[I]/1000;INTN Py=(INTN)(Y+C)+(INTN)R*mSfbCircleY[I]/1000;ICON_DOT((UINTN)Px,(UINTN)Py);} ICON_DOT(X+Size/3,Y+Size/3); ICON_DOT(X+Size*2/3,Y+Size/3); ICON_DOT(X+Size/3,Y+Size*2/3);
-  } else if (Icon == CanoeIconLanguage) {
-    ICON_LINE(X+Size/6,Y+Size*4/5,X+Size/3,Y+Size/5); ICON_LINE(X+Size/3,Y+Size/5,X+Size/2,Y+Size*4/5); ICON_LINE(X+Size/4,Y+Size*3/5,X+Size*5/12,Y+Size*3/5); ICON_LINE(X+Size*3/5,Y+Size/3,X+Size*5/6,Y+Size/3); ICON_LINE(X+Size*3/5,Y+Size/2,X+Size*5/6,Y+Size/2); ICON_LINE(X+Size*3/5,Y+Size*2/3,X+Size*5/6,Y+Size*2/3);
-  } else if (Icon == CanoeIconGame) {
-    ICON_RECT(X+Size/8,Y+Size/3,X+Size*7/8,Y+Size*3/4); ICON_LINE(X+Size/4,Y+C,X+Size/2,Y+C); ICON_LINE(X+Size*3/8,Y+Size*3/8,X+Size*3/8,Y+Size*5/8); ICON_DOT(X+Size*2/3,Y+Size*5/12); ICON_DOT(X+Size*3/4,Y+Size*7/12);
-  } else if (Icon == CanoeIconInfo) {
-    for(I=0;I<24;I++){INTN Px=(INTN)(X+C)+(INTN)R*mSfbCircleX[I]/1000;INTN Py=(INTN)(Y+C)+(INTN)R*mSfbCircleY[I]/1000;ICON_DOT((UINTN)Px,(UINTN)Py);} ICON_DOT(X+C,Y+Size/3); ICON_LINE(X+C,Y+Size/2,X+C,Y+Size*3/4);
-  } else if (Icon == CanoeIconWarning) {
-    ICON_LINE(X+C,Y+Size/8,X+Size*7/8,Y+Size*4/5); ICON_LINE(X+Size*7/8,Y+Size*4/5,X+Size/8,Y+Size*4/5); ICON_LINE(X+Size/8,Y+Size*4/5,X+C,Y+Size/8); ICON_LINE(X+C,Y+Size/3,X+C,Y+Size*3/5); ICON_DOT(X+C,Y+Size*7/10);
-  } else {
-    ICON_LINE(X+Size/5,Y+Size/5,X+Size*4/5,Y+Size*4/5); ICON_LINE(X+Size*4/5,Y+Size/5,X+Size/5,Y+Size*4/5); ICON_DOT(X+Size/5,Y+Size/5); ICON_DOT(X+Size*4/5,Y+Size*4/5);
+  CONST CANOE_ICON_PATH *Path;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Buffer = NULL;
+  UINT8 *Mask = NULL;
+  UINTN High, Radius, Index, Sx, Sy, Count;
+  INTN LastX = -1, LastY = -1;
+  if (!mSfbGraphical || Icon == CanoeIconNone || Icon > CanoeIconWarning ||
+      Size < 12 || Color == NULL) return;
+  Path = &mCanoeIconPaths[Icon]; High = Size * 4;
+  Mask = AllocateZeroPool (High * High);
+  Buffer = AllocatePool (Size * Size * sizeof (*Buffer));
+  if (Mask == NULL || Buffer == NULL) goto Done;
+  Radius = MAX ((UINTN)3, High / 24);
+  for (Index = 0; Index < Path->Count; Index++) {
+    INTN X1,Y1,X0,Y0,Dx,Dy,Step,Steps;
+    if (Path->Points[Index].X < 0) { LastX=LastY=-1; continue; }
+    X1=Path->Points[Index].X*(INTN)(High-1)/24;
+    Y1=Path->Points[Index].Y*(INTN)(High-1)/24;
+    if (LastX < 0) { LastX=X1; LastY=Y1; }
+    X0=LastX;Y0=LastY;Dx=X1-X0;Dy=Y1-Y0;
+    Steps=MAX(Dx<0?-Dx:Dx,Dy<0?-Dy:Dy);
+    for (Step=0;Step<=MAX(Steps,1);Step++) {
+      INTN Cx=X0+Dx*Step/MAX(Steps,1),Cy=Y0+Dy*Step/MAX(Steps,1),Ox,Oy;
+      for(Oy=-(INTN)Radius;Oy<=(INTN)Radius;Oy++)for(Ox=-(INTN)Radius;Ox<=(INTN)Radius;Ox++){
+        INTN Px=Cx+Ox,Py=Cy+Oy;
+        if(Px>=0&&Py>=0&&Px<(INTN)High&&Py<(INTN)High&&Ox*Ox+Oy*Oy<=(INTN)(Radius*Radius))Mask[Py*High+Px]=1;
+      }
+    }
+    LastX=X1;LastY=Y1;
   }
-#undef ICON_DOT
-#undef ICON_RECT
-#undef ICON_LINE
+  if(EFI_ERROR(mSfbGop->Blt(mSfbGop,Buffer,EfiBltVideoToBltBuffer,X,Y,0,0,Size,Size,Size*sizeof(*Buffer))))goto Done;
+  for(Sy=0;Sy<Size;Sy++)for(Sx=0;Sx<Size;Sx++){
+    Count=0;for(Index=0;Index<4;Index++){
+      Count+=Mask[(Sy*4+Index)*High+Sx*4];Count+=Mask[(Sy*4+Index)*High+Sx*4+1];
+      Count+=Mask[(Sy*4+Index)*High+Sx*4+2];Count+=Mask[(Sy*4+Index)*High+Sx*4+3];
+    }
+    if(Count){UINTN A=Count*255/16;EFI_GRAPHICS_OUTPUT_BLT_PIXEL *O=&Buffer[Sy*Size+Sx];
+      O->Blue=(UINT8)((Color->Blue*A+O->Blue*(255-A)+127)/255);
+      O->Green=(UINT8)((Color->Green*A+O->Green*(255-A)+127)/255);
+      O->Red=(UINT8)((Color->Red*A+O->Red*(255-A)+127)/255);}
+  }
+  (VOID)mSfbGop->Blt(mSfbGop,Buffer,EfiBltBufferToVideo,0,0,X,Y,Size,Size,Size*sizeof(*Buffer));
+Done:
+  if(Mask!=NULL)FreePool(Mask);if(Buffer!=NULL)FreePool(Buffer);
 }
 
 STATIC
@@ -780,11 +793,32 @@ SfbProtocolDrawIcon (IN CANOE_UI_PROTOCOL *This, IN UINTN X, IN UINTN Y,
   return EFI_SUCCESS;
 }
 
+STATIC EFI_STATUS EFIAPI
+SfbProtocolCaptureScreen (IN CANOE_UI_PROTOCOL *This)
+{
+  EFI_STATUS Status;
+  (VOID)This;
+  Status = SfbCaptureScreen ();
+  if (mSfbGraphical) {
+    CONST CHAR16 *Message = EFI_ERROR (Status)
+      ? (mSfbLanguage == 0 ? L"截图保存失败" : L"Screenshot failed")
+      : (mSfbLanguage == 0 ? L"截图已暂存" : L"Screenshot captured");
+    UINTN Width=mSfbGop->Mode->Info->HorizontalResolution;
+    UINTN TextWidth=SfbGfxMeasureText(30,Message);
+    SfbGfxFill((Width-TextWidth-56)/2,mSfbSafeTop+18,TextWidth+56,62,
+               EFI_ERROR(Status)?&mSfbColorWarning:&mSfbColorSurface);
+    SfbGfxText((Width-TextWidth)/2,mSfbSafeTop+34,30,Message,&mSfbColorText);
+    gBS->Stall(300000);
+  }
+  return Status;
+}
+
 STATIC CANOE_UI_PROTOCOL mSfbUiProtocol = {
   CANOE_UI_PROTOCOL_REVISION,
   SfbProtocolMeasureText,
   SfbProtocolDrawText,
-  SfbProtocolDrawIcon
+  SfbProtocolDrawIcon,
+  SfbProtocolCaptureScreen
 };
 
 /* ChargerEx exposes voltage rather than fuel-gauge SOC on this open-source
@@ -1187,6 +1221,28 @@ SfbTouchWaitEvent (VOID)
   return mSfbTouch == NULL ? NULL : mSfbTouch->WaitForInput;
 }
 
+STATIC EFI_STATUS EFIAPI
+SfbProtocolCaptureScreen (IN CANOE_UI_PROTOCOL *This);
+
+STATIC BOOLEAN
+SfbTryScreenshotChord (IN UINT16 FirstScanCode)
+{
+  EFI_EVENT TimerEvent,WaitList[2];
+  UINTN EventIndex;
+  EFI_INPUT_KEY Key;
+  if(EFI_ERROR(gBS->CreateEvent(EVT_TIMER,TPL_CALLBACK,NULL,NULL,&TimerEvent)))return FALSE;
+  WaitList[0]=gST->ConIn->WaitForKey;WaitList[1]=TimerEvent;
+  gBS->SetTimer(TimerEvent,TimerRelative,150ULL*10000);
+  if(EFI_ERROR(gBS->WaitForEvent(2,WaitList,&EventIndex))||EventIndex==1){gBS->CloseEvent(TimerEvent);return FALSE;}
+  gBS->CloseEvent(TimerEvent);
+  if(EFI_ERROR(gST->ConIn->ReadKeyStroke(gST->ConIn,&Key)))return FALSE;
+  if((FirstScanCode==SCAN_UP&&Key.ScanCode==SCAN_DOWN)||
+     (FirstScanCode==SCAN_DOWN&&Key.ScanCode==SCAN_UP)){
+    (VOID)SfbProtocolCaptureScreen(NULL);return TRUE;
+  }
+  return FALSE;
+}
+
 /* Translate one completed swipe threshold into the existing menu-key model.
  * The gesture fires as soon as it crosses the threshold, then remains consumed
  * until release so a single swipe cannot race through multiple rows. */
@@ -1321,8 +1377,10 @@ SfbWaitForKey (IN UINT32 TimeoutMs)
      * reports power differently from what is expected here.
      */
     if (Key.ScanCode == SCAN_UP) {
+      if (SfbTryScreenshotChord (SCAN_UP)) continue;
       Result = SfbKeyUp;
     } else if (Key.ScanCode == SCAN_DOWN) {
+      if (SfbTryScreenshotChord (SCAN_DOWN)) continue;
       Result = SfbKeyDown;
     } else {
       DEBUG ((EFI_D_VERBOSE, "SFB: confirm key scan=0x%x char=0x%x\n",
@@ -1484,6 +1542,110 @@ SfbGfxWrappedText (IN UINTN X, IN UINTN Y, IN UINTN Available,
     Start += Count;
     while (Start < Length && Text[Start] == L' ') Start++;
   }
+}
+
+#define SFB_ART_MAX_BYTES  (16 * 1024)
+#define SFB_ART_MAX_LINES  24
+#define SFB_ART_MAX_COLS   96
+
+STATIC UINTN
+SfbLoadArtText (OUT CHAR16 Lines[SFB_ART_MAX_LINES][SFB_ART_MAX_COLS + 1])
+{
+  STATIC CONST CHAR8 Fallback[] =
+    "   ____    _    _   _  ___  _____\n"
+    "  / ___|  / \\  | \\ | |/ _ \\| ____|\n"
+    " | |     / _ \\ |  \\| | | | |  _|\n"
+    " | |___ / ___ \\| |\\  | |_| | |___\n"
+    "  \\____/_/   \\_\\_| \\_|\\___/|_____|";
+  CHAR8 *Raw = NULL;
+  UINTN Bytes = 0, Count = 0, Column = 0, Index, VolumeCount = 0;
+  EFI_HANDLE *Volumes = NULL;
+  CONST CHAR8 *Source = Fallback;
+
+  ZeroMem (Lines, SFB_ART_MAX_LINES * (SFB_ART_MAX_COLS + 1) * sizeof (CHAR16));
+  if (!EFI_ERROR (SfbLocateVolumes (&Volumes, &VolumeCount)) && Volumes != NULL) {
+    for (Index = 0; Index < VolumeCount; Index++) {
+      EFI_FILE_PROTOCOL *Root = NULL;
+      CONST CHAR16 *Path = SfbIsExt4Volume (Volumes[Index])
+                             ? L"\\efisp\\ARTTEXT.TXT" : L"\\ARTTEXT.TXT";
+      Raw = AllocateZeroPool (SFB_ART_MAX_BYTES + 1);
+      if (Raw == NULL) break;
+      if (!EFI_ERROR (SfbOpenVolumeRoot (Volumes[Index], &Root)) && Root != NULL &&
+          !EFI_ERROR (SfbReadFileBytes (Root, Path, Raw,
+                                        SFB_ART_MAX_BYTES, &Bytes)) && Bytes != 0) {
+        Root->Close (Root); Source = Raw; break;
+      }
+      if (Root != NULL) Root->Close (Root);
+      FreePool (Raw); Raw = NULL;
+    }
+    FreePool (Volumes);
+  }
+  for (Index = 0; Source[Index] != '\0' && Count < SFB_ART_MAX_LINES; Index++) {
+    UINT8 Ch = (UINT8)Source[Index];
+    if (Ch == '\r') continue;
+    if (Ch == '\n') { Lines[Count][Column] = L'\0'; Count++; Column = 0; continue; }
+    if (Ch == '\t') {
+      UINTN Spaces = 4 - (Column & 3);
+      while (Spaces-- != 0 && Column < SFB_ART_MAX_COLS) Lines[Count][Column++] = L' ';
+    } else if (Ch >= 0x20 && Ch <= 0x7e && Column < SFB_ART_MAX_COLS) {
+      Lines[Count][Column++] = (CHAR16)Ch;
+    }
+  }
+  if (Count < SFB_ART_MAX_LINES && Column != 0) Count++;
+  if (Raw != NULL) FreePool (Raw);
+  return Count;
+}
+
+STATIC
+VOID
+SfbDrawArtText (IN BOOLEAN Animate)
+{
+  CHAR16 Lines[SFB_ART_MAX_LINES][SFB_ART_MAX_COLS + 1];
+  CHAR16 FrameLine[SFB_ART_MAX_COLS + 1];
+  UINTN Count, Frame, Row, Col, Width, Height, MaxWidth = 0, Size = 48;
+  UINTN BoxX, BoxY, BoxW, BoxH, Preset;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Saved = NULL;
+  if (!mSfbGraphical || mSfbArtAnimation == 0) return;
+  Count = SfbLoadArtText (Lines); if (Count == 0) return;
+  Width=mSfbGop->Mode->Info->HorizontalResolution;
+  Height=mSfbGop->Mode->Info->VerticalResolution;
+  while (Size > 18) {
+    MaxWidth=0;for(Row=0;Row<Count;Row++)MaxWidth=MAX(MaxWidth,SfbGfxMeasureText((UINT16)Size,Lines[Row]));
+    if(MaxWidth<=Width-2*CANOE_UI_SIDE_MARGIN && Count*(Size+8)<=Height-CANOE_UI_SAFE_TOP_MIN-CANOE_UI_FOOTER_HEIGHT)break;
+    Size-=2;
+  }
+  BoxW=MIN(MaxWidth+32,Width);BoxH=Count*(Size+8)+24;
+  BoxX=(Width-BoxW)/2;BoxY=(Height-BoxH)/2;
+  Saved=AllocatePool(BoxW*BoxH*sizeof(*Saved));
+  if(Saved==NULL||EFI_ERROR(mSfbGop->Blt(mSfbGop,Saved,EfiBltVideoToBltBuffer,BoxX,BoxY,0,0,BoxW,BoxH,BoxW*sizeof(*Saved))))goto Done;
+  Preset=mSfbArtAnimation==7?(GetPerformanceCounter()%6)+1:mSfbArtAnimation;
+  for(Frame=Animate?0:15;Frame<16;Frame++){
+    (VOID)mSfbGop->Blt(mSfbGop,Saved,EfiBltBufferToVideo,0,0,BoxX,BoxY,BoxW,BoxH,BoxW*sizeof(*Saved));
+    for(Row=0;Row<Count;Row++){
+      UINTN Len=StrLen(Lines[Row]),Visible=0;
+      INTN LineX;
+      EFI_GRAPHICS_OUTPUT_BLT_PIXEL DrawColor=mSfbColorPrimary;
+      for(Col=0;Col<Len;Col++){
+        BOOLEAN Show;
+        UINTN Hash=(Col*37+Row*61+Col*Row*7)&15;
+        if(Preset==1)Show=(Row*SFB_ART_MAX_COLS+Col)*16<=(Frame+1)*(Count*SFB_ART_MAX_COLS);
+        else if(Preset==2)Show=Row*16<=(Frame+1)*Count;
+        else if(Preset==3)Show=Hash<=Frame;
+        else if(Preset==4)Show=Frame>=((Col+Row*2)&7);
+        else Show=(Frame>=MIN((Col+Row)&7,(UINTN)6));
+        FrameLine[Col]=Show?Lines[Row][Col]:L' ';if(Show)Visible++;
+      }
+      FrameLine[Len]=L'\0';if(Visible==0)continue;
+      if(Preset==5&&Frame<15&&((Row+Frame)&3)==0)DrawColor=mSfbColorText;
+      LineX=(Width-SfbGfxMeasureText((UINT16)Size,FrameLine))/2;
+      if(Preset==6&&Frame<12)LineX+=(INTN)(((Row*13+Frame*7)%7)-3)*3;
+      SfbGfxText((UINTN)(LineX+3),BoxY+12+Row*(Size+8)+3,(UINT16)Size,FrameLine,&mSfbColorShadow);
+      SfbGfxText((UINTN)LineX,BoxY+12+Row*(Size+8),(UINT16)Size,FrameLine,&DrawColor);
+    }
+    if(Animate&&Frame<15)gBS->Stall(50000);
+  }
+Done:
+  if(Saved!=NULL)FreePool(Saved);
 }
 
 STATIC
@@ -1725,7 +1887,7 @@ SfbUpdateBootingStage (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen,
    * where the menu itself is what needs clearing away.
    */
   SfbLoadSettings ();
-  if (mSfbBootVisual == 0) return;
+  if (mSfbBootVisual == 0 && mSfbArtAnimation == 0) return;
   if (ClearScreen && Stage == 0) {
     SfbBeginScreen (L"Launching", L"Starting the selected EFI application");
   }
@@ -1741,12 +1903,17 @@ SfbUpdateBootingStage (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen,
     if (Stage == 0) {
       CustomAssetActive = FALSE;
     }
+    if (mSfbBootVisual == 0) {
+      SfbDrawArtText ((BOOLEAN)(Stage == 0));
+      return;
+    }
     if (mSfbBootVisual == 2 && (Stage == 0 || CustomAssetActive) &&
         !EFI_ERROR (SfbDrawLaunchAsset (mSfbBootAssetLabel,
                                         mSfbBootAssetPath,
                                         mSfbBootPosition, Stage, mSfbGop,
                                         &mSfbColorBackground))) {
       CustomAssetActive = TRUE;
+      SfbDrawArtText ((BOOLEAN)(Stage == 0));
       return;
     }
     if (mSfbBootPosition == 0) CardY = mSfbSafeTop + CANOE_UI_HEADER_HEIGHT + 70;
@@ -1766,6 +1933,7 @@ SfbUpdateBootingStage (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen,
       SfbGfxFill (CardX + 64, CardY + CardHeight - 54,
                   (CardWidth - 128) * Progress / 3, 8, &mSfbColorPrimary);
     }
+    SfbDrawArtText ((BOOLEAN)(Stage == 0));
     return;
   }
   gST->ConOut->EnableCursor (gST->ConOut, FALSE);
@@ -2006,10 +2174,17 @@ SfbRunSettings (VOID)
     CHAR16  Descriptions[48];
     CHAR16  BootVisual[64];
     CHAR16  BootPosition[48];
-    UINTN   AssetRow = (mSfbBootVisual == 2) ? 7 : MAX_UINTN;
-    UINTN   PinRow = 7 + ((mSfbBootVisual == 2) ? 1 : 0);
+    CHAR16  ArtAnimation[64];
+    STATIC CONST CHAR16 *ArtNamesZh[] = { L"关闭",L"打字显现",L"扫描揭示",L"溶解聚合",L"波浪组装",L"流光落定",L"轻故障归位",L"随机" };
+    STATIC CONST CHAR16 *ArtNamesEn[] = { L"Off",L"Type on",L"Scan reveal",L"Dissolve",L"Wave assemble",L"Shimmer",L"Glitch settle",L"Random" };
+    UINTN   ArtRow = 7;
+    UINTN   PreviewRow = 8;
+    UINTN   AssetRow = (mSfbBootVisual == 2) ? 9 : MAX_UINTN;
+    UINTN   PinRow = 9 + ((mSfbBootVisual == 2) ? 1 : 0);
     UINTN   BackRow = PinRow + ((mSfbLockMode == SFB_LOCK_PIN) ? 1 : 0);
     UINTN   Count = BackRow + 1;
+    UINTN   Start;
+    UINTN   Last;
 
     UnicodeSPrint (Base, sizeof (Base),
                    mSfbLanguage == 0 ? L"明暗基底    %s" : L"Neutral base    %s",
@@ -2037,28 +2212,38 @@ SfbRunSettings (VOID)
                    mSfbBootPosition == 0 ? (mSfbLanguage == 0 ? L"顶部" : L"Top") :
                    mSfbBootPosition == 1 ? (mSfbLanguage == 0 ? L"居中" : L"Center") :
                                            (mSfbLanguage == 0 ? L"底部" : L"Bottom"));
-    SfbSetVisibleRows (Count);
+    UnicodeSPrint (ArtAnimation, sizeof (ArtAnimation),
+                   mSfbLanguage == 0 ? L"艺术字动画    %s" : L"ASCII art    %s",
+                   mSfbLanguage == 0 ? ArtNamesZh[mSfbArtAnimation]
+                                     : ArtNamesEn[mSfbArtAnimation]);
+    SfbSetVisibleRows (MIN (Count, (UINTN)SFB_VISIBLE_ROWS));
     SfbBeginScreen (L"Settings",
                     mSfbLanguage == 0 ? L"选择一项进行更改"
                                       : L"Select an item to change");
-    SfbDrawRow ((BOOLEAN)(Cursor == 0), L"COLOR", Base);
-    SfbDrawRow ((BOOLEAN)(Cursor == 1), L"COLOR", Accent);
-    SfbDrawRow ((BOOLEAN)(Cursor == 2), L"LANG", Language);
-    SfbDrawRow ((BOOLEAN)(Cursor == 3), L"LOCK", Lock);
-    SfbDrawRow ((BOOLEAN)(Cursor == 4), L"INFO", Descriptions);
-    SfbDrawRow ((BOOLEAN)(Cursor == 5), L"COLOR", BootVisual);
-    SfbDrawRow ((BOOLEAN)(Cursor == 6), L"INFO", BootPosition);
-    if (AssetRow != MAX_UINTN) {
+    Start = SfbWindowStart (Cursor, Count, SFB_VISIBLE_ROWS);
+    Last = MIN (Count, Start + SFB_VISIBLE_ROWS);
+#define SFB_SETTING_ROW(_index,_marker,_text) do { if ((_index)>=Start&&(_index)<Last) SfbDrawRow((BOOLEAN)(Cursor==(_index)),(_marker),(_text)); } while(0)
+    SFB_SETTING_ROW (0, L"COLOR", Base);
+    SFB_SETTING_ROW (1, L"COLOR", Accent);
+    SFB_SETTING_ROW (2, L"LANG", Language);
+    SFB_SETTING_ROW (3, L"LOCK", Lock);
+    SFB_SETTING_ROW (4, L"INFO", Descriptions);
+    SFB_SETTING_ROW (5, L"COLOR", BootVisual);
+    SFB_SETTING_ROW (6, L"INFO", BootPosition);
+    if (ArtRow >= Start && ArtRow < Last) SfbDrawRowIcon ((BOOLEAN)(Cursor == ArtRow), CanoeIconLanguage, L"TEXT", ArtAnimation);
+    if (PreviewRow >= Start && PreviewRow < Last) SfbDrawRowIcon ((BOOLEAN)(Cursor == PreviewRow), CanoeIconBoot, L"PLAY", mSfbLanguage == 0 ? L"预览开机动画" : L"Preview boot animation");
+    if (AssetRow != MAX_UINTN && AssetRow >= Start && AssetRow < Last) {
       SfbDrawRow ((BOOLEAN)(Cursor == AssetRow), L"FILES",
                   mSfbBootAssetPath[0] == '\0'
                     ? (mSfbLanguage == 0 ? L"选择 PNG/GIF" : L"Choose PNG/GIF")
                     : (mSfbLanguage == 0 ? L"更换启动素材" : L"Change launch asset"));
     }
-    if (mSfbLockMode == SFB_LOCK_PIN) {
+    if (mSfbLockMode == SFB_LOCK_PIN && PinRow >= Start && PinRow < Last) {
       SfbDrawRow ((BOOLEAN)(Cursor == PinRow), L"PIN",
                   mSfbLanguage == 0 ? L"更改 PIN 密码" : L"Change PIN");
     }
-    SfbDrawRow ((BOOLEAN)(Cursor == BackRow), L"BACK", SfbLocalize (L"Back"));
+    SFB_SETTING_ROW (BackRow, L"BACK", SfbLocalize (L"Back"));
+#undef SFB_SETTING_ROW
     SfbEndScreen (L"Select");
 
     Key = SfbWaitForKey (mSfbDescriptions ? 2000 : 0);
@@ -2071,6 +2256,8 @@ SfbRunSettings (VOID)
       else if (Cursor == 4) TipTitle = Descriptions;
       else if (Cursor == 5) TipTitle = BootVisual;
       else if (Cursor == 6) TipTitle = BootPosition;
+      else if (Cursor == ArtRow) TipTitle = ArtAnimation;
+      else if (Cursor == PreviewRow) TipTitle = mSfbLanguage == 0 ? L"预览开机动画" : L"Preview boot animation";
       else if (Cursor == AssetRow) TipTitle = mSfbLanguage == 0 ? L"选择启动素材" : L"Choose launch asset";
       else if (mSfbLockMode == SFB_LOCK_PIN && Cursor == PinRow) {
         TipTitle = mSfbLanguage == 0 ? L"更改 PIN 密码" : L"Change PIN";
@@ -2120,6 +2307,16 @@ SfbRunSettings (VOID)
       mSfbBootPosition = (mSfbBootPosition + 1) % 3;
       SfbSaveSettings ();
       Cursor = 6;
+    } else if (Cursor == ArtRow) {
+      mSfbArtAnimation = (mSfbArtAnimation + 1) % 8;
+      SfbSaveSettings ();
+      Cursor = ArtRow;
+    } else if (Cursor == PreviewRow) {
+      SfbBeginScreen (mSfbLanguage == 0 ? L"开机动画预览" : L"Boot animation preview",
+                      mSfbLanguage == 0 ? L"按任意键返回" : L"Press any key to return");
+      SfbDrawArtText (TRUE);
+      SfbWaitForKey (0);
+      Cursor = PreviewRow;
     } else if (Cursor == AssetRow) {
       if (SfbSelectBootAsset (mSfbBootAssetLabel,
                               sizeof (mSfbBootAssetLabel),
@@ -2215,14 +2412,9 @@ SfbSettingsDescription (IN UINTN Cursor)
     case 4: return L"控制菜单项停留两秒后是否显示功能说明。";
     case 5: return L"选择关闭启动提示、极简启动卡或自定义 PNG/GIF。";
     case 6: return L"将启动画面放在安全区的顶部、中央或底部。";
-    case 7: return mSfbBootVisual == 2
-                     ? L"从已挂载卷选择 PNG 或 GIF 启动素材。"
-                     : (mSfbLockMode == SFB_LOCK_PIN
-                          ? L"重新设置用于进入启动菜单的四位 PIN。"
-                          : L"返回启动菜单。");
-    case 8: return (mSfbBootVisual == 2 && mSfbLockMode == SFB_LOCK_PIN)
-                     ? L"重新设置用于进入启动菜单的四位 PIN。"
-                     : L"返回启动菜单。";
+    case 7: return L"选择有限开场动画；内容来自 persist/efisp/ARTTEXT.TXT。";
+    case 8: return L"不启动 EFI 应用，直接预览当前艺术字开场动画。";
+    case 9: return mSfbBootVisual == 2 ? L"从已挂载卷选择 PNG 或 GIF 启动素材。" : L"更改 PIN 或返回。";
     default: return L"返回启动菜单。";
     }
   }
@@ -2234,14 +2426,9 @@ SfbSettingsDescription (IN UINTN Cursor)
   case 4: return L"Show or hide item descriptions after a two-second pause.";
   case 5: return L"Choose no launch visual, the minimal card, or a custom PNG/GIF.";
   case 6: return L"Place the launch visual at the top, center, or bottom safe area.";
-  case 7: return mSfbBootVisual == 2
-                   ? L"Choose a PNG or GIF launch asset from a mounted volume."
-                   : (mSfbLockMode == SFB_LOCK_PIN
-                        ? L"Change the four-digit PIN used to enter the boot menu."
-                        : L"Return to the boot menu.");
-  case 8: return (mSfbBootVisual == 2 && mSfbLockMode == SFB_LOCK_PIN)
-                   ? L"Change the four-digit PIN used to enter the boot menu."
-                   : L"Return to the boot menu.";
+  case 7: return L"Choose a finite entrance; content comes from persist/efisp/ARTTEXT.TXT.";
+  case 8: return L"Preview the current ASCII-art entrance without launching an EFI app.";
+  case 9: return mSfbBootVisual == 2 ? L"Choose a PNG or GIF launch asset from a mounted volume." : L"Change the PIN or return.";
   default: return L"Return to the boot menu.";
   }
 }

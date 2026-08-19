@@ -9,9 +9,22 @@ EFISP_DIR=$PERSIST_MNT/efisp
 RTC_TIME=/sys/class/rtc/rtc0/time
 ONCE=$1
 
+export_sfb_screenshot() {
+  block=/dev/block/by-name/efisp
+  shot_dir=$EFISP_DIR/screenshots
+  [ -x "$MODDIR/bin/sfbshot" ] || MODDIR=${0%/*}
+  [ -x "$MODDIR/bin/sfbshot" ] || return 0
+  [ -b "$block" ] || return 0
+  mkdir -p "$shot_dir" || return 0
+  output="$shot_dir/boot-$(date +%Y%m%d-%H%M%S).bmp"
+  "$MODDIR/bin/sfbshot" "$block" "$output" >/dev/null 2>&1 || true
+}
+
 attempt=0
 while true; do
-  if grep -q " $PERSIST_MNT " /proc/mounts 2>/dev/null && [ -r "$RTC_TIME" ]; then
+  if grep -q " $PERSIST_MNT " /proc/mounts 2>/dev/null; then
+    export_sfb_screenshot
+    if [ -r "$RTC_TIME" ]; then
     android_year=$(date +%Y 2>/dev/null)
     android_time=$(date +%H:%M:%S 2>/dev/null)
     rtc_time=$(cat "$RTC_TIME" 2>/dev/null)
@@ -42,6 +55,7 @@ while true; do
         attempt=120
         ;;
     esac
+    fi
   fi
   attempt=$((attempt + 1))
   if [ "$attempt" -lt 120 ]; then

@@ -95,3 +95,4 @@
   AndroidToolsPkg/Application/ArbTools/ArbTools.inf
   AndroidToolsPkg/Application/BLTools/BLTools.inf
   AndroidToolsPkg/Application/MiniGames/MiniGames.inf
+  AndroidToolsPkg/Application/TouchProbe/TouchProbe.inf

@@ -456,7 +456,7 @@ AtUiInitialize (IN EFI_HANDLE ImageHandle)
                              (VOID **)&mAtSharedUi);
   mAtGraphical = (BOOLEAN)(!EFI_ERROR (Status) && mAtGop != NULL &&
                             mAtSharedUi != NULL &&
-                            mAtSharedUi->Revision >= CANOE_UI_PROTOCOL_REVISION &&
+                            mAtSharedUi->Revision >= CANOE_UI_PROTOCOL_REVISION_DRAW &&
                             mAtGop->Mode != NULL && mAtGop->Mode->Info != NULL);
   if (mAtGraphical) {
     mAtSafeTop = MAX (CANOE_UI_SAFE_TOP_MIN,
@@ -561,8 +561,25 @@ AtUiWaitForKey (IN UINT32 TimeoutMs)
     Status = gBS->WaitForEvent (WaitCount, WaitList, &EventIndex);
     if (EFI_ERROR (Status) || EventIndex == 1) break;
     if (EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, &Key))) continue;
-    if (Key.ScanCode == SCAN_UP) Result = AtKeyUp;
-    else if (Key.ScanCode == SCAN_DOWN) Result = AtKeyDown;
+    if (Key.ScanCode == SCAN_UP || Key.ScanCode == SCAN_DOWN) {
+      EFI_EVENT ChordTimer,ChordWait[2];UINTN ChordIndex;EFI_INPUT_KEY Other;
+      BOOLEAN Captured=FALSE;
+      if(!EFI_ERROR(gBS->CreateEvent(EVT_TIMER,TPL_CALLBACK,NULL,NULL,&ChordTimer))){
+        ChordWait[0]=gST->ConIn->WaitForKey;ChordWait[1]=ChordTimer;
+        gBS->SetTimer(ChordTimer,TimerRelative,150ULL*10000);
+        if(!EFI_ERROR(gBS->WaitForEvent(2,ChordWait,&ChordIndex))&&ChordIndex==0&&
+           !EFI_ERROR(gST->ConIn->ReadKeyStroke(gST->ConIn,&Other))&&
+           ((Key.ScanCode==SCAN_UP&&Other.ScanCode==SCAN_DOWN)||
+            (Key.ScanCode==SCAN_DOWN&&Other.ScanCode==SCAN_UP))&&
+           mAtSharedUi!=NULL&&mAtSharedUi->Revision>=CANOE_UI_PROTOCOL_REVISION&&
+           mAtSharedUi->CaptureScreen!=NULL){
+          (VOID)mAtSharedUi->CaptureScreen(mAtSharedUi);Captured=TRUE;
+        }
+        gBS->CloseEvent(ChordTimer);
+      }
+      if(Captured)continue;
+      Result=Key.ScanCode==SCAN_UP?AtKeyUp:AtKeyDown;
+    }
     else Result = AtKeySelect;
     break;
   }

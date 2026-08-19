@@ -2,3 +2,4 @@ $@RebootTools:tools\RebootTools.efi
 $@BLTools:tools\BLTools.efi
 $@ARBTools:tools\ArbTools.efi
 $@MiniGames:tools\MiniGames.efi
+$@Touch probe:tools\TouchProbe.efi

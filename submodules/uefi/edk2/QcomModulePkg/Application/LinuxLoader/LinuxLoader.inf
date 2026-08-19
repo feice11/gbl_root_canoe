@@ -79,6 +79,8 @@
 	SuperFbBrowser.c
 	SuperFbImage.c
 	SuperFbImage.h
+	CanoeIcons.h
+	SuperFbScreenshot.c
 
 [Packages]
 	ArmPkg/ArmPkg.dec
