@@ -65,7 +65,6 @@ STATIC BOOLEAN                       mSfbClockCalibrationLoaded = FALSE;
 STATIC UINTN                         mSfbClockOffsetSeconds = 0;
 STATIC BOOLEAN                       mSfbSelectionAnimated = FALSE;
 STATIC EFI_ABSOLUTE_POINTER_PROTOCOL *mSfbTouch = NULL;
-STATIC BOOLEAN                       mSfbTouchInitialized = FALSE;
 STATIC BOOLEAN                       mSfbTouchTracking = FALSE;
 STATIC BOOLEAN                       mSfbTouchGestureConsumed = FALSE;
 STATIC UINT64                        mSfbTouchStartY = 0;
@@ -98,7 +97,7 @@ STATIC UINTN    mSfbAccent = 0;
 STATIC UINTN    mSfbLockMode = SFB_LOCK_OFF;
 STATIC UINTN    mSfbLanguage = 0; /* 0 = Chinese, 1 = English */
 STATIC BOOLEAN  mSfbDescriptions = TRUE;
-/* 0 = hidden, 1 = minimal card, 2 = custom PNG/GIF. */
+/* 0 = hidden, 1 = minimal card, 2 = custom PNG/GIF, 3 = ASCII art. */
 STATIC UINTN    mSfbBootVisual = 1;
 /* 0 = top, 1 = center, 2 = bottom. */
 STATIC UINTN    mSfbBootPosition = 1;
@@ -156,14 +155,14 @@ SfbLoadSettings (VOID)
 
   if (!EFI_ERROR (SfbStoreRead (SFB_STORE_SETTINGS, Record,
                                 sizeof (Record))) &&
-      AsciiStrnCmp (Record, "SFC6|", 5) == 0 &&
+      AsciiStrnCmp (Record, "SFC7|", 5) == 0 &&
       Record[5] >= '0' && Record[5] < '0' + CANOE_UI_BASE_COUNT &&
       Record[6] == '|' &&
       Record[7] >= '0' && Record[7] < '0' + CANOE_UI_ACCENT_COUNT &&
       Record[8] == '|' && Record[9] >= '0' && Record[9] <= '2' &&
       Record[10] == '|' && (Record[11] == '0' || Record[11] == '1') &&
       Record[12] == '|' && (Record[13] == '0' || Record[13] == '1') &&
-      Record[14] == '|' && Record[15] >= '0' && Record[15] <= '2' &&
+      Record[14] == '|' && Record[15] >= '0' && Record[15] <= '3' &&
       Record[16] == '|' && Record[17] >= '0' && Record[17] <= '2' &&
       Record[18] == '|' && Record[19] >= '0' && Record[19] <= '7' &&
       Record[20] == '|') {
@@ -197,6 +196,29 @@ SfbLoadSettings (VOID)
     if (*Cursor == '|') Cursor++;
     AsciiStrnCpyS (mSfbBootAssetPath, sizeof (mSfbBootAssetPath), Cursor,
                    sizeof (mSfbBootAssetPath) - 1);
+  } else if (AsciiStrnCmp (Record, "SFC6|", 5) == 0 &&
+      Record[5] >= '0' && Record[5] < '0' + CANOE_UI_BASE_COUNT &&
+      Record[6] == '|' && Record[7] >= '0' &&
+      Record[7] < '0' + CANOE_UI_ACCENT_COUNT && Record[8] == '|' &&
+      Record[9] >= '0' && Record[9] <= '2' && Record[10] == '|' &&
+      (Record[11] == '0' || Record[11] == '1') && Record[12] == '|' &&
+      (Record[13] == '0' || Record[13] == '1') && Record[14] == '|' &&
+      Record[15] >= '0' && Record[15] <= '2' && Record[16] == '|' &&
+      Record[17] >= '0' && Record[17] <= '2' && Record[18] == '|' &&
+      Record[19] >= '0' && Record[19] <= '7' && Record[20] == '|') {
+    CONST CHAR8 *Cursor;
+    UINTN Out;
+    mSfbBase=Record[5]-'0';mSfbAccent=Record[7]-'0';mSfbLockMode=Record[9]-'0';
+    mSfbLanguage=Record[11]-'0';mSfbDescriptions=(BOOLEAN)(Record[13]=='1');
+    mSfbBootVisual=Record[15]-'0';mSfbBootPosition=Record[17]-'0';
+    mSfbArtAnimation=Record[19]-'0';
+    if (mSfbArtAnimation != 0) mSfbBootVisual = 3;
+    Cursor=Record+21;
+    for(Index=0;Index<4;Index++){if(Cursor[Index]<'0'||Cursor[Index]>'9'){mSfbLockMode=SFB_LOCK_OFF;break;}mSfbPin[Index]=Cursor[Index];}
+    mSfbPin[4]='\0';Cursor+=4;if(*Cursor=='|')Cursor++;Out=0;
+    while(*Cursor!='\0'&&*Cursor!='|'&&Out+1<sizeof(mSfbBootAssetLabel))mSfbBootAssetLabel[Out++]=*Cursor++;
+    mSfbBootAssetLabel[Out]='\0';if(*Cursor=='|')Cursor++;
+    AsciiStrnCpyS(mSfbBootAssetPath,sizeof(mSfbBootAssetPath),Cursor,sizeof(mSfbBootAssetPath)-1);
   } else if (AsciiStrnCmp (Record, "SFC5|", 5) == 0 &&
       Record[5] >= '0' && Record[5] < '0' + CANOE_UI_BASE_COUNT &&
       Record[6] == '|' && Record[7] >= '0' &&
@@ -211,6 +233,7 @@ SfbLoadSettings (VOID)
     mSfbBase=Record[5]-'0';mSfbAccent=Record[7]-'0';mSfbLockMode=Record[9]-'0';
     mSfbLanguage=Record[11]-'0';mSfbDescriptions=(BOOLEAN)(Record[13]=='1');
     mSfbBootVisual=Record[15]-'0';mSfbBootPosition=Record[17]-'0';Cursor=Record+19;
+    if (mSfbArtAnimation != 0) mSfbBootVisual = 3;
     for(Index=0;Index<4;Index++){if(Cursor[Index]<'0'||Cursor[Index]>'9'){mSfbLockMode=SFB_LOCK_OFF;break;}mSfbPin[Index]=Cursor[Index];}
     mSfbPin[4]='\0';Cursor+=4;if(*Cursor=='|')Cursor++;Out=0;
     while(*Cursor!='\0'&&*Cursor!='|'&&Out+1<sizeof(mSfbBootAssetLabel))mSfbBootAssetLabel[Out++]=*Cursor++;
@@ -315,7 +338,7 @@ SfbSaveSettings (VOID)
 {
   CHAR8  Record[SFB_STORE_SLOT_BYTES];
 
-  AsciiSPrint (Record, sizeof (Record), "SFC6|%u|%u|%u|%u|%u|%u|%u|%u|%a|%a|%a",
+  AsciiSPrint (Record, sizeof (Record), "SFC7|%u|%u|%u|%u|%u|%u|%u|%u|%a|%a|%a",
                (UINT32)mSfbBase, (UINT32)mSfbAccent, (UINT32)mSfbLockMode,
                (UINT32)mSfbLanguage, mSfbDescriptions ? 1U : 0U,
                (UINT32)mSfbBootVisual, (UINT32)mSfbBootPosition,
@@ -1204,19 +1227,42 @@ STATIC
 EFI_EVENT
 SfbTouchWaitEvent (VOID)
 {
-  EFI_STATUS  Status;
+  EFI_HANDLE  *Handles = NULL;
+  UINTN       HandleCount = 0;
+  UINTN       Index;
 
-  if (!mSfbTouchInitialized) {
-    mSfbTouchInitialized = TRUE;
-    Status = gBS->LocateProtocol (&gEfiAbsolutePointerProtocolGuid, NULL,
-                                   (VOID **)&mSfbTouch);
-    if (EFI_ERROR (Status) || mSfbTouch == NULL || mSfbTouch->Mode == NULL ||
-        mSfbTouch->WaitForInput == NULL ||
-        mSfbTouch->Mode->AbsoluteMaxY <= mSfbTouch->Mode->AbsoluteMinY) {
-      mSfbTouch = NULL;
-    } else {
-      DEBUG ((EFI_D_INFO, "SFB: absolute pointer touch input enabled\n"));
+  if (mSfbTouch != NULL) {
+    return mSfbTouch->WaitForInput;
+  }
+
+  if (EFI_ERROR (gBS->LocateHandleBuffer (
+                       ByProtocol, &gEfiAbsolutePointerProtocolGuid, NULL,
+                       &HandleCount, &Handles))) {
+    return NULL;
+  }
+
+  for (Index = 0; Index < HandleCount; Index++) {
+    EFI_ABSOLUTE_POINTER_PROTOCOL  *Candidate = NULL;
+
+    if (!EFI_ERROR (gBS->HandleProtocol (
+                          Handles[Index], &gEfiAbsolutePointerProtocolGuid,
+                          (VOID **)&Candidate)) &&
+        Candidate != NULL && Candidate->Mode != NULL &&
+        Candidate->GetState != NULL && Candidate->WaitForInput != NULL &&
+        Candidate->Mode->AbsoluteMaxY > Candidate->Mode->AbsoluteMinY) {
+      mSfbTouch = Candidate;
+      mSfbTouchTracking = FALSE;
+      mSfbTouchGestureConsumed = FALSE;
+      DEBUG ((EFI_D_INFO,
+              "SFB: absolute pointer %u enabled, Y=%Lu..%Lu attr=0x%x\n",
+              (UINT32)Index, Candidate->Mode->AbsoluteMinY,
+              Candidate->Mode->AbsoluteMaxY, Candidate->Mode->Attributes));
+      break;
     }
+  }
+
+  if (Handles != NULL) {
+    FreePool (Handles);
   }
 
   return mSfbTouch == NULL ? NULL : mSfbTouch->WaitForInput;
@@ -1264,6 +1310,12 @@ SfbReadTouchGesture (VOID)
 
   Status = mSfbTouch->GetState (mSfbTouch, &State);
   if (EFI_ERROR (Status)) {
+    if (Status != EFI_NOT_READY) {
+      DEBUG ((EFI_D_WARN, "SFB: absolute pointer failed: %r\n", Status));
+      mSfbTouch = NULL;
+      mSfbTouchTracking = FALSE;
+      mSfbTouchGestureConsumed = FALSE;
+    }
     return SfbKeyTimeout;
   }
 
@@ -1309,12 +1361,14 @@ SfbWaitForKey (IN UINT32 TimeoutMs)
 {
   EFI_STATUS     Status;
   EFI_EVENT      TimerEvent = NULL;
+  EFI_EVENT      TouchPollEvent = NULL;
   EFI_EVENT      TouchEvent;
-  EFI_EVENT      WaitList[3];
+  EFI_EVENT      WaitList[4];
   UINTN          WaitCount;
   UINTN          EventIndex;
   UINTN          TimerEventIndex = MAX_UINTN;
   UINTN          TouchEventIndex = MAX_UINTN;
+  UINTN          TouchPollEventIndex = MAX_UINTN;
   EFI_INPUT_KEY  Key;
   SFB_KEY        Result = SfbKeyTimeout;
 
@@ -1340,6 +1394,20 @@ SfbWaitForKey (IN UINT32 TimeoutMs)
     TouchEventIndex = WaitCount;
     WaitList[WaitCount++] = TouchEvent;
   }
+  Status = gBS->CreateEvent (EVT_TIMER, TPL_CALLBACK, NULL, NULL,
+                             &TouchPollEvent);
+  if (!EFI_ERROR (Status)) {
+    Status = gBS->SetTimer (TouchPollEvent, TimerPeriodic,
+                            TouchEvent != NULL ? 20ULL * 10000
+                                               : 250ULL * 10000);
+    if (EFI_ERROR (Status)) {
+      gBS->CloseEvent (TouchPollEvent);
+      TouchPollEvent = NULL;
+    } else {
+      TouchPollEventIndex = WaitCount;
+      WaitList[WaitCount++] = TouchPollEvent;
+    }
+  }
   if (TimerEvent != NULL) {
     TimerEventIndex = WaitCount;
     WaitList[WaitCount++] = TimerEvent;
@@ -1357,6 +1425,21 @@ SfbWaitForKey (IN UINT32 TimeoutMs)
     }
 
     if (EventIndex == TouchEventIndex) {
+      Result = SfbReadTouchGesture ();
+      if (Result != SfbKeyTimeout) {
+        break;
+      }
+      continue;
+    }
+
+    if (EventIndex == TouchPollEventIndex) {
+      if (mSfbTouch == NULL) {
+        (VOID)SfbTouchWaitEvent ();
+        if (mSfbTouch != NULL) {
+          (VOID)gBS->SetTimer (TouchPollEvent, TimerPeriodic,
+                               20ULL * 10000);
+        }
+      }
       Result = SfbReadTouchGesture ();
       if (Result != SfbKeyTimeout) {
         break;
@@ -1394,6 +1477,9 @@ SfbWaitForKey (IN UINT32 TimeoutMs)
 
   if (TimerEvent != NULL) {
     gBS->CloseEvent (TimerEvent);
+  }
+  if (TouchPollEvent != NULL) {
+    gBS->CloseEvent (TouchPollEvent);
   }
 
   return Result;
@@ -1606,7 +1692,7 @@ SfbDrawArtText (IN BOOLEAN Animate)
   UINTN Count, Frame, Row, Col, Width, Height, MaxWidth = 0, Size = 48;
   UINTN BoxX, BoxY, BoxW, BoxH, Preset;
   EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Saved = NULL;
-  if (!mSfbGraphical || mSfbArtAnimation == 0) return;
+  if (!mSfbGraphical) return;
   Count = SfbLoadArtText (Lines); if (Count == 0) return;
   Width=mSfbGop->Mode->Info->HorizontalResolution;
   Height=mSfbGop->Mode->Info->VerticalResolution;
@@ -1620,6 +1706,7 @@ SfbDrawArtText (IN BOOLEAN Animate)
   Saved=AllocatePool(BoxW*BoxH*sizeof(*Saved));
   if(Saved==NULL||EFI_ERROR(mSfbGop->Blt(mSfbGop,Saved,EfiBltVideoToBltBuffer,BoxX,BoxY,0,0,BoxW,BoxH,BoxW*sizeof(*Saved))))goto Done;
   Preset=mSfbArtAnimation==7?(GetPerformanceCounter()%6)+1:mSfbArtAnimation;
+  if (Preset == 0) Animate = FALSE;
   for(Frame=Animate?0:15;Frame<16;Frame++){
     (VOID)mSfbGop->Blt(mSfbGop,Saved,EfiBltBufferToVideo,0,0,BoxX,BoxY,BoxW,BoxH,BoxW*sizeof(*Saved));
     for(Row=0;Row<Count;Row++){
@@ -1629,7 +1716,8 @@ SfbDrawArtText (IN BOOLEAN Animate)
       for(Col=0;Col<Len;Col++){
         BOOLEAN Show;
         UINTN Hash=(Col*37+Row*61+Col*Row*7)&15;
-        if(Preset==1)Show=(Row*SFB_ART_MAX_COLS+Col)*16<=(Frame+1)*(Count*SFB_ART_MAX_COLS);
+        if(Preset==0)Show=TRUE;
+        else if(Preset==1)Show=(Row*SFB_ART_MAX_COLS+Col)*16<=(Frame+1)*(Count*SFB_ART_MAX_COLS);
         else if(Preset==2)Show=Row*16<=(Frame+1)*Count;
         else if(Preset==3)Show=Hash<=Frame;
         else if(Preset==4)Show=Frame>=((Col+Row*2)&7);
@@ -1888,7 +1976,7 @@ SfbUpdateBootingStage (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen,
    * where the menu itself is what needs clearing away.
    */
   SfbLoadSettings ();
-  if (mSfbBootVisual == 0 && mSfbArtAnimation == 0) return;
+  if (mSfbBootVisual == 0) return;
   if (ClearScreen && Stage == 0) {
     SfbBeginScreen (L"Launching", L"Starting the selected EFI application");
   }
@@ -1904,7 +1992,7 @@ SfbUpdateBootingStage (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen,
     if (Stage == 0) {
       CustomAssetActive = FALSE;
     }
-    if (mSfbBootVisual == 0) {
+    if (mSfbBootVisual == 3) {
       SfbDrawArtText ((BOOLEAN)(Stage == 0));
       return;
     }
@@ -1914,7 +2002,6 @@ SfbUpdateBootingStage (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen,
                                         mSfbBootPosition, Stage, mSfbGop,
                                         &mSfbColorBackground))) {
       CustomAssetActive = TRUE;
-      SfbDrawArtText ((BOOLEAN)(Stage == 0));
       return;
     }
     if (mSfbBootPosition == 0) CardY = mSfbSafeTop + CANOE_UI_HEADER_HEIGHT + 70;
@@ -1934,7 +2021,6 @@ SfbUpdateBootingStage (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen,
       SfbGfxFill (CardX + 64, CardY + CardHeight - 54,
                   (CardWidth - 128) * Progress / 3, 8, &mSfbColorPrimary);
     }
-    SfbDrawArtText ((BOOLEAN)(Stage == 0));
     return;
   }
   gST->ConOut->EnableCursor (gST->ConOut, FALSE);
@@ -2176,12 +2262,15 @@ SfbRunSettings (VOID)
     CHAR16  BootVisual[64];
     CHAR16  BootPosition[48];
     CHAR16  ArtAnimation[64];
-    STATIC CONST CHAR16 *ArtNamesZh[] = { L"关闭",L"打字显现",L"扫描揭示",L"溶解聚合",L"波浪组装",L"流光落定",L"轻故障归位",L"随机" };
-    STATIC CONST CHAR16 *ArtNamesEn[] = { L"Off",L"Type on",L"Scan reveal",L"Dissolve",L"Wave assemble",L"Shimmer",L"Glitch settle",L"Random" };
-    UINTN   ArtRow = 7;
-    UINTN   PreviewRow = 8;
-    UINTN   AssetRow = (mSfbBootVisual == 2) ? 9 : MAX_UINTN;
-    UINTN   PinRow = 9 + ((mSfbBootVisual == 2) ? 1 : 0);
+    STATIC CONST CHAR16 *ArtNamesZh[] = { L"静态",L"打字显现",L"扫描揭示",L"溶解聚合",L"波浪组装",L"流光落定",L"轻故障归位",L"随机" };
+    STATIC CONST CHAR16 *ArtNamesEn[] = { L"Static",L"Type on",L"Scan reveal",L"Dissolve",L"Wave assemble",L"Shimmer",L"Glitch settle",L"Random" };
+    UINTN   NextRow = 6;
+    UINTN   PositionRow = (mSfbBootVisual == 1 || mSfbBootVisual == 2)
+                            ? NextRow++ : MAX_UINTN;
+    UINTN   ArtRow = (mSfbBootVisual == 3) ? NextRow++ : MAX_UINTN;
+    UINTN   PreviewRow = NextRow++;
+    UINTN   AssetRow = (mSfbBootVisual == 2) ? NextRow++ : MAX_UINTN;
+    UINTN   PinRow = NextRow;
     UINTN   BackRow = PinRow + ((mSfbLockMode == SFB_LOCK_PIN) ? 1 : 0);
     UINTN   Count = BackRow + 1;
     UINTN   Start;
@@ -2207,7 +2296,8 @@ SfbRunSettings (VOID)
                    mSfbLanguage == 0 ? L"启动画面    %s" : L"Launch visual    %s",
                    mSfbBootVisual == 0 ? (mSfbLanguage == 0 ? L"关闭" : L"Off") :
                    mSfbBootVisual == 1 ? (mSfbLanguage == 0 ? L"极简" : L"Minimal") :
-                                         (mSfbLanguage == 0 ? L"自定义" : L"Custom"));
+                   mSfbBootVisual == 2 ? (mSfbLanguage == 0 ? L"自定义" : L"Custom") :
+                                         (mSfbLanguage == 0 ? L"ASCII 艺术字" : L"ASCII art"));
     UnicodeSPrint (BootPosition, sizeof (BootPosition),
                    mSfbLanguage == 0 ? L"画面位置    %s" : L"Visual position    %s",
                    mSfbBootPosition == 0 ? (mSfbLanguage == 0 ? L"顶部" : L"Top") :
@@ -2230,8 +2320,8 @@ SfbRunSettings (VOID)
     SFB_SETTING_ROW (3, L"LOCK", Lock);
     SFB_SETTING_ROW (4, L"INFO", Descriptions);
     SFB_SETTING_ROW (5, L"COLOR", BootVisual);
-    SFB_SETTING_ROW (6, L"INFO", BootPosition);
-    if (ArtRow >= Start && ArtRow < Last) SfbDrawRowIcon ((BOOLEAN)(Cursor == ArtRow), CanoeIconLanguage, L"TEXT", ArtAnimation);
+    if (PositionRow != MAX_UINTN) SFB_SETTING_ROW (PositionRow, L"INFO", BootPosition);
+    if (ArtRow != MAX_UINTN && ArtRow >= Start && ArtRow < Last) SfbDrawRowIcon ((BOOLEAN)(Cursor == ArtRow), CanoeIconLanguage, L"TEXT", ArtAnimation);
     if (PreviewRow >= Start && PreviewRow < Last) SfbDrawRowIcon ((BOOLEAN)(Cursor == PreviewRow), CanoeIconBoot, L"PLAY", mSfbLanguage == 0 ? L"预览开机动画" : L"Preview boot animation");
     if (AssetRow != MAX_UINTN && AssetRow >= Start && AssetRow < Last) {
       SfbDrawRow ((BOOLEAN)(Cursor == AssetRow), L"FILES",
@@ -2256,7 +2346,7 @@ SfbRunSettings (VOID)
       else if (Cursor == 3) TipTitle = Lock;
       else if (Cursor == 4) TipTitle = Descriptions;
       else if (Cursor == 5) TipTitle = BootVisual;
-      else if (Cursor == 6) TipTitle = BootPosition;
+      else if (Cursor == PositionRow) TipTitle = BootPosition;
       else if (Cursor == ArtRow) TipTitle = ArtAnimation;
       else if (Cursor == PreviewRow) TipTitle = mSfbLanguage == 0 ? L"预览开机动画" : L"Preview boot animation";
       else if (Cursor == AssetRow) TipTitle = mSfbLanguage == 0 ? L"选择启动素材" : L"Choose launch asset";
@@ -2301,21 +2391,20 @@ SfbRunSettings (VOID)
       SfbSaveSettings ();
       Cursor = 4;
     } else if (Cursor == 5) {
-      mSfbBootVisual = (mSfbBootVisual + 1) % 3;
+      mSfbBootVisual = (mSfbBootVisual + 1) % 4;
       SfbSaveSettings ();
       Cursor = 5;
-    } else if (Cursor == 6) {
+    } else if (Cursor == PositionRow) {
       mSfbBootPosition = (mSfbBootPosition + 1) % 3;
       SfbSaveSettings ();
-      Cursor = 6;
+      Cursor = PositionRow;
     } else if (Cursor == ArtRow) {
       mSfbArtAnimation = (mSfbArtAnimation + 1) % 8;
       SfbSaveSettings ();
       Cursor = ArtRow;
     } else if (Cursor == PreviewRow) {
-      SfbBeginScreen (mSfbLanguage == 0 ? L"开机动画预览" : L"Boot animation preview",
-                      mSfbLanguage == 0 ? L"按任意键返回" : L"Press any key to return");
-      SfbDrawArtText (TRUE);
+      SfbUpdateBootingStage (mSfbLanguage == 0 ? L"预览" : L"Preview",
+                             TRUE, 0);
       SfbWaitForKey (0);
       Cursor = PreviewRow;
     } else if (Cursor == AssetRow) {
@@ -2404,6 +2493,14 @@ STATIC
 CONST CHAR16 *
 SfbSettingsDescription (IN UINTN Cursor)
 {
+  UINTN  NextRow = 6;
+  UINTN  PositionRow = (mSfbBootVisual == 1 || mSfbBootVisual == 2)
+                         ? NextRow++ : MAX_UINTN;
+  UINTN  ArtRow = (mSfbBootVisual == 3) ? NextRow++ : MAX_UINTN;
+  UINTN  PreviewRow = NextRow++;
+  UINTN  AssetRow = (mSfbBootVisual == 2) ? NextRow++ : MAX_UINTN;
+  UINTN  PinRow = NextRow;
+
   if (mSfbLanguage == 0) {
     switch (Cursor) {
     case 0: return L"独立选择石墨、瓷白、雾灰或纯黑界面基底。";
@@ -2411,13 +2508,15 @@ SfbSettingsDescription (IN UINTN Cursor)
     case 2: return L"在中文和英文界面之间切换。";
     case 3: return L"选择关闭、简易按键锁或四位 PIN 密码锁。";
     case 4: return L"控制菜单项停留两秒后是否显示功能说明。";
-    case 5: return L"选择关闭启动提示、极简启动卡或自定义 PNG/GIF。";
-    case 6: return L"将启动画面放在安全区的顶部、中央或底部。";
-    case 7: return L"选择有限开场动画；内容来自 persist/efisp/ARTTEXT.TXT。";
-    case 8: return L"不启动 EFI 应用，直接预览当前艺术字开场动画。";
-    case 9: return mSfbBootVisual == 2 ? L"从已挂载卷选择 PNG 或 GIF 启动素材。" : L"更改 PIN 或返回。";
-    default: return L"返回启动菜单。";
+    case 5: return L"选择关闭、极简卡片、自定义 PNG/GIF 或 ASCII 艺术字；四者不会叠加。";
+    default: break;
     }
+    if (Cursor == PositionRow) return L"将极简或自定义启动画面放在顶部、中央或底部。";
+    if (Cursor == ArtRow) return L"选择艺术字的有限开场动画；内容来自 persist/efisp/ARTTEXT.TXT。";
+    if (Cursor == PreviewRow) return L"不启动 EFI 应用，直接预览当前选择的开机动画类型。";
+    if (Cursor == AssetRow) return L"从已挂载卷选择 PNG 或 GIF 启动素材。";
+    if (mSfbLockMode == SFB_LOCK_PIN && Cursor == PinRow) return L"更改四位 PIN 密码。";
+    return L"返回启动菜单。";
   }
   switch (Cursor) {
   case 0: return L"Choose a graphite, porcelain, smoke, or OLED-black neutral base.";
@@ -2425,13 +2524,15 @@ SfbSettingsDescription (IN UINTN Cursor)
   case 2: return L"Switch the interface language between Chinese and English.";
   case 3: return L"Choose no lock, the simple key lock, or a four-digit PIN.";
   case 4: return L"Show or hide item descriptions after a two-second pause.";
-  case 5: return L"Choose no launch visual, the minimal card, or a custom PNG/GIF.";
-  case 6: return L"Place the launch visual at the top, center, or bottom safe area.";
-  case 7: return L"Choose a finite entrance; content comes from persist/efisp/ARTTEXT.TXT.";
-  case 8: return L"Preview the current ASCII-art entrance without launching an EFI app.";
-  case 9: return mSfbBootVisual == 2 ? L"Choose a PNG or GIF launch asset from a mounted volume." : L"Change the PIN or return.";
-  default: return L"Return to the boot menu.";
+  case 5: return L"Choose off, minimal, custom PNG/GIF, or ASCII art; the modes never overlay.";
+  default: break;
   }
+  if (Cursor == PositionRow) return L"Place a minimal or custom launch visual at the top, center, or bottom.";
+  if (Cursor == ArtRow) return L"Choose the ASCII art entrance; content comes from persist/efisp/ARTTEXT.TXT.";
+  if (Cursor == PreviewRow) return L"Preview the currently selected launch visual without starting an EFI app.";
+  if (Cursor == AssetRow) return L"Choose a PNG or GIF launch asset from a mounted volume.";
+  if (mSfbLockMode == SFB_LOCK_PIN && Cursor == PinRow) return L"Change the four-digit PIN.";
+  return L"Return to the boot menu.";
 }
 
 STATIC

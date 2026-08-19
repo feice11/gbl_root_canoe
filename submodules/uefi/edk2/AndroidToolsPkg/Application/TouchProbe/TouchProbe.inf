@@ -20,3 +20,5 @@
   UefiBootServicesTableLib
 [Protocols]
   gEfiAbsolutePointerProtocolGuid
+  gEfiSpiConfigurationProtocolGuid
+  gEfiSpiHcProtocolGuid
