@@ -1,8 +1,8 @@
 /** @file
  * Shared graphical UI for every AndroidToolsPkg application.
  *
- * BootMenu passes CUI3|<language>|<theme>|<clock-offset>|<clock-valid>|<tips>
- * through EFI LoadOptions. Legacy CUI1/CUI2 records remain accepted.
+ * BootMenu passes CUI4|<language>|<base>|<accent>|<clock-offset>|<clock-valid>|<tips>
+ * through EFI LoadOptions. Legacy CUI1-CUI3 records remain accepted.
  * tool visually and linguistically in sync without writing a second settings
  * store. Volume up/down move, power confirms; menu confirmation is protected
  * by the same quiet-window debounce used by BootMenu.
@@ -31,13 +31,14 @@
 #define AT_ATTR_NORMAL    EFI_TEXT_ATTR (EFI_LIGHTGRAY, EFI_BLACK)
 #define AT_ATTR_SELECTED  EFI_TEXT_ATTR (EFI_WHITE, EFI_BLUE)
 #define AT_ATTR_TITLE     EFI_TEXT_ATTR (EFI_WHITE, EFI_BLACK)
-#define AT_THEME_COUNT  4
-
-STATIC CONST CANOE_UI_PALETTE  mAtPalettes[AT_THEME_COUNT] =
-  CANOE_UI_PALETTE_INITIALIZERS;
+STATIC CONST CANOE_UI_BASE  mAtBases[CANOE_UI_BASE_COUNT] =
+  CANOE_UI_BASE_INITIALIZERS;
+STATIC CONST CANOE_UI_ACCENT  mAtAccents[CANOE_UI_ACCENT_COUNT] =
+  CANOE_UI_ACCENT_INITIALIZERS;
 
 STATIC BOOLEAN                       mAtChinese = TRUE;
-STATIC UINTN                         mAtTheme = 0;
+STATIC UINTN                         mAtBase = 0;
+STATIC UINTN                         mAtAccent = 0;
 STATIC BOOLEAN                       mAtGraphical = FALSE;
 STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL  *mAtGop = NULL;
 STATIC CANOE_UI_PROTOCOL             *mAtSharedUi = NULL;
@@ -61,6 +62,7 @@ STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mAtMuted = { 0xb0, 0xa8, 0x9f, 0 };
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mAtDisabled = { 0x68, 0x62, 0x5d, 0 };
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mAtSuccess = { 0x78, 0xd6, 0x55, 0 };
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mAtWarning = { 0x42, 0xa5, 0xff, 0 };
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mAtShadow = { 0x08, 0x07, 0x06, 0 };
 
 STATIC
 VOID
@@ -387,14 +389,36 @@ AtUiInitialize (IN EFI_HANDLE ImageHandle)
       LoadedImage != NULL && LoadedImage->LoadOptions != NULL &&
       LoadedImage->LoadOptionsSize >= 9 * sizeof (CHAR16)) {
     Options = (CONST CHAR16 *)LoadedImage->LoadOptions;
-    if ((StrnCmp (Options, L"CUI1|", 5) == 0 ||
+    if (LoadedImage->LoadOptionsSize >= 12 * sizeof (CHAR16) &&
+        StrnCmp (Options, L"CUI4|", 5) == 0 &&
+        (Options[5] == L'0' || Options[5] == L'1') &&
+        Options[6] == L'|' && Options[7] >= L'0' &&
+        Options[7] < L'0' + CANOE_UI_BASE_COUNT &&
+        Options[8] == L'|' && Options[9] >= L'0' &&
+        Options[9] < L'0' + CANOE_UI_ACCENT_COUNT && Options[10] == L'|') {
+      mAtChinese = (BOOLEAN)(Options[5] == L'0');
+      mAtBase = Options[7] - L'0';
+      mAtAccent = Options[9] - L'0';
+      mAtClockOffsetSeconds = StrDecimalToUintn (Options + 11) % 86400;
+      ClockFlag = StrStr (Options + 11, L"|");
+      mAtClockValid = (BOOLEAN)(ClockFlag != NULL && ClockFlag[1] == L'1');
+      if (ClockFlag != NULL) {
+        DescriptionFlag = StrStr (ClockFlag + 1, L"|");
+        if (DescriptionFlag != NULL &&
+            (DescriptionFlag[1] == L'0' || DescriptionFlag[1] == L'1')) {
+          mAtDescriptions = (BOOLEAN)(DescriptionFlag[1] == L'1');
+        }
+      }
+    } else if ((StrnCmp (Options, L"CUI1|", 5) == 0 ||
          StrnCmp (Options, L"CUI2|", 5) == 0 ||
          StrnCmp (Options, L"CUI3|", 5) == 0) &&
         (Options[5] == L'0' || Options[5] == L'1') &&
         Options[6] == L'|' && Options[7] >= L'0' &&
-        Options[7] < L'0' + AT_THEME_COUNT) {
+        Options[7] < L'0' + 4) {
+      STATIC CONST UINT8  LegacyAccentMap[4] = { 0, 7, 6, 4 };
       mAtChinese = (BOOLEAN)(Options[5] == L'0');
-      mAtTheme = Options[7] - L'0';
+      mAtBase = 0;
+      mAtAccent = LegacyAccentMap[Options[7] - L'0'];
       if ((StrnCmp (Options, L"CUI2|", 5) == 0 ||
            StrnCmp (Options, L"CUI3|", 5) == 0) && Options[8] == L'|') {
         mAtClockOffsetSeconds = StrDecimalToUintn (Options + 9) % 86400;
@@ -410,14 +434,22 @@ AtUiInitialize (IN EFI_HANDLE ImageHandle)
       }
     }
   }
-  mAtBackground = mAtPalettes[mAtTheme].Background;
-  mAtSurface = mAtPalettes[mAtTheme].Surface;
-  mAtPrimary = mAtPalettes[mAtTheme].Primary;
-  mAtText = mAtPalettes[mAtTheme].Text;
-  mAtMuted = mAtPalettes[mAtTheme].Muted;
-  mAtDisabled = mAtPalettes[mAtTheme].Disabled;
-  mAtSuccess = mAtPalettes[mAtTheme].Success;
-  mAtWarning = mAtPalettes[mAtTheme].Warning;
+  mAtBackground = mAtBases[mAtBase].Background;
+  mAtSurface = mAtBases[mAtBase].Surface;
+  mAtText = mAtBases[mAtBase].Text;
+  mAtMuted = mAtBases[mAtBase].Muted;
+  mAtDisabled = mAtBases[mAtBase].Disabled;
+  mAtShadow = mAtBases[mAtBase].Shadow;
+  mAtPrimary = mAtAccents[mAtAccent].Primary;
+  mAtSuccess = mAtAccents[mAtAccent].Success;
+  mAtWarning = mAtAccents[mAtAccent].Warning;
+  if (mAtAccent == 0 && mAtBase == 1) {
+    mAtPrimary.Blue = 0x24;
+    mAtPrimary.Green = 0x21;
+    mAtPrimary.Red = 0x20;
+    mAtSuccess.Blue = mAtSuccess.Green = mAtSuccess.Red = 0x44;
+    mAtWarning.Blue = mAtWarning.Green = mAtWarning.Red = 0x68;
+  }
   Status = gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL,
                                 (VOID **)&mAtGop);
   (VOID)gBS->LocateProtocol (&gCanoeUiProtocolGuid, NULL,
@@ -705,7 +737,7 @@ AtDrawDescriptionCard (IN CONST CHAR16 *Title, IN CONST CHAR16 *Description)
   BoxX = CANOE_UI_STATUS_INSET;
   BoxWidth = Width - 2 * CANOE_UI_STATUS_INSET;
   BoxY = Height - CANOE_UI_FOOTER_HEIGHT - BoxHeight - 34;
-  AtGfxFill (BoxX + 12, BoxY + 14, BoxWidth, BoxHeight, &mAtBackground);
+  AtGfxFill (BoxX + 12, BoxY + 14, BoxWidth, BoxHeight, &mAtShadow);
   AtGfxFill (BoxX, BoxY, BoxWidth, BoxHeight, &mAtSurface);
   AtGfxFill (BoxX, BoxY, 6, BoxHeight, &mAtPrimary);
   AtGfxFill (BoxX, BoxY, BoxWidth, 3, &mAtPrimary);

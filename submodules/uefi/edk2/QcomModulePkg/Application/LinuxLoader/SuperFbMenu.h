@@ -416,6 +416,9 @@ SfbUiLanguage (VOID);
 UINTN
 SfbUiTheme (VOID);
 
+UINTN
+SfbUiAccent (VOID);
+
 BOOLEAN
 SfbUiDescriptionsEnabled (VOID);
 

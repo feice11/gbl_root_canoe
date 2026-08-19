@@ -80,16 +80,19 @@ STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorMuted      = { 0xb0, 0xa8, 0x9f, 0
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorDisabled   = { 0x68, 0x62, 0x5d, 0x00 };
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorSuccess    = { 0x78, 0xd6, 0x55, 0x00 };
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorWarning    = { 0x42, 0xa5, 0xff, 0x00 };
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorShadow     = { 0x08, 0x07, 0x06, 0x00 };
 
-#define SFB_THEME_COUNT  4
 #define SFB_LOCK_OFF     0
 #define SFB_LOCK_SIMPLE  1
 #define SFB_LOCK_PIN     2
 
-STATIC CONST CANOE_UI_PALETTE  mSfbPalettes[SFB_THEME_COUNT] =
-  CANOE_UI_PALETTE_INITIALIZERS;
+STATIC CONST CANOE_UI_BASE  mSfbBases[CANOE_UI_BASE_COUNT] =
+  CANOE_UI_BASE_INITIALIZERS;
+STATIC CONST CANOE_UI_ACCENT  mSfbAccents[CANOE_UI_ACCENT_COUNT] =
+  CANOE_UI_ACCENT_INITIALIZERS;
 
-STATIC UINTN    mSfbTheme = 0;
+STATIC UINTN    mSfbBase = 0;
+STATIC UINTN    mSfbAccent = 0;
 STATIC UINTN    mSfbLockMode = SFB_LOCK_OFF;
 STATIC UINTN    mSfbLanguage = 0; /* 0 = Chinese, 1 = English */
 STATIC BOOLEAN  mSfbDescriptions = TRUE;
@@ -106,14 +109,32 @@ STATIC
 VOID
 SfbApplyPalette (VOID)
 {
-  mSfbColorBackground = mSfbPalettes[mSfbTheme].Background;
-  mSfbColorSurface = mSfbPalettes[mSfbTheme].Surface;
-  mSfbColorPrimary = mSfbPalettes[mSfbTheme].Primary;
-  mSfbColorText = mSfbPalettes[mSfbTheme].Text;
-  mSfbColorMuted = mSfbPalettes[mSfbTheme].Muted;
-  mSfbColorDisabled = mSfbPalettes[mSfbTheme].Disabled;
-  mSfbColorSuccess = mSfbPalettes[mSfbTheme].Success;
-  mSfbColorWarning = mSfbPalettes[mSfbTheme].Warning;
+  mSfbColorBackground = mSfbBases[mSfbBase].Background;
+  mSfbColorSurface = mSfbBases[mSfbBase].Surface;
+  mSfbColorText = mSfbBases[mSfbBase].Text;
+  mSfbColorMuted = mSfbBases[mSfbBase].Muted;
+  mSfbColorDisabled = mSfbBases[mSfbBase].Disabled;
+  mSfbColorShadow = mSfbBases[mSfbBase].Shadow;
+  mSfbColorPrimary = mSfbAccents[mSfbAccent].Primary;
+  mSfbColorSuccess = mSfbAccents[mSfbAccent].Success;
+  mSfbColorWarning = mSfbAccents[mSfbAccent].Warning;
+  if (mSfbAccent == 0 && mSfbBase == 1) {
+    mSfbColorPrimary.Blue = 0x24;
+    mSfbColorPrimary.Green = 0x21;
+    mSfbColorPrimary.Red = 0x20;
+    mSfbColorSuccess.Blue = mSfbColorSuccess.Green = mSfbColorSuccess.Red = 0x44;
+    mSfbColorWarning.Blue = mSfbColorWarning.Green = mSfbColorWarning.Red = 0x68;
+  }
+}
+
+STATIC
+VOID
+SfbImportLegacyTheme (IN UINTN Theme)
+{
+  STATIC CONST UINT8  AccentMap[4] = { 0, 7, 6, 4 };
+
+  mSfbBase = 0;
+  mSfbAccent = AccentMap[MIN (Theme, ARRAY_SIZE (AccentMap) - 1)];
 }
 
 STATIC
@@ -131,8 +152,47 @@ SfbLoadSettings (VOID)
 
   if (!EFI_ERROR (SfbStoreRead (SFB_STORE_SETTINGS, Record,
                                 sizeof (Record))) &&
-      AsciiStrnCmp (Record, "SFC4|", 5) == 0 &&
-      Record[5] >= '0' && Record[5] < '0' + SFB_THEME_COUNT &&
+      AsciiStrnCmp (Record, "SFC5|", 5) == 0 &&
+      Record[5] >= '0' && Record[5] < '0' + CANOE_UI_BASE_COUNT &&
+      Record[6] == '|' &&
+      Record[7] >= '0' && Record[7] < '0' + CANOE_UI_ACCENT_COUNT &&
+      Record[8] == '|' && Record[9] >= '0' && Record[9] <= '2' &&
+      Record[10] == '|' && (Record[11] == '0' || Record[11] == '1') &&
+      Record[12] == '|' && (Record[13] == '0' || Record[13] == '1') &&
+      Record[14] == '|' && Record[15] >= '0' && Record[15] <= '2' &&
+      Record[16] == '|' && Record[17] >= '0' && Record[17] <= '2' &&
+      Record[18] == '|') {
+    CONST CHAR8 *Cursor;
+    UINTN Out;
+    mSfbBase = Record[5] - '0';
+    mSfbAccent = Record[7] - '0';
+    mSfbLockMode = Record[9] - '0';
+    mSfbLanguage = Record[11] - '0';
+    mSfbDescriptions = (BOOLEAN)(Record[13] == '1');
+    mSfbBootVisual = Record[15] - '0';
+    mSfbBootPosition = Record[17] - '0';
+    Cursor = Record + 19;
+    for (Index = 0; Index < 4; Index++) {
+      if (Cursor[Index] < '0' || Cursor[Index] > '9') {
+        mSfbLockMode = SFB_LOCK_OFF;
+        break;
+      }
+      mSfbPin[Index] = Cursor[Index];
+    }
+    mSfbPin[4] = '\0';
+    Cursor += 4;
+    if (*Cursor == '|') Cursor++;
+    Out = 0;
+    while (*Cursor != '\0' && *Cursor != '|' &&
+           Out + 1 < sizeof (mSfbBootAssetLabel)) {
+      mSfbBootAssetLabel[Out++] = *Cursor++;
+    }
+    mSfbBootAssetLabel[Out] = '\0';
+    if (*Cursor == '|') Cursor++;
+    AsciiStrnCpyS (mSfbBootAssetPath, sizeof (mSfbBootAssetPath), Cursor,
+                   sizeof (mSfbBootAssetPath) - 1);
+  } else if (AsciiStrnCmp (Record, "SFC4|", 5) == 0 &&
+      Record[5] >= '0' && Record[5] < '0' + 4 &&
       Record[6] == '|' && Record[7] >= '0' && Record[7] <= '2' &&
       Record[8] == '|' && (Record[9] == '0' || Record[9] == '1') &&
       Record[10] == '|' && (Record[11] == '0' || Record[11] == '1') &&
@@ -141,7 +201,7 @@ SfbLoadSettings (VOID)
       Record[16] == '|') {
     CONST CHAR8 *Cursor;
     UINTN Out;
-    mSfbTheme = Record[5] - '0';
+    SfbImportLegacyTheme (Record[5] - '0');
     mSfbLockMode = Record[7] - '0';
     mSfbLanguage = Record[9] - '0';
     mSfbDescriptions = (BOOLEAN)(Record[11] == '1');
@@ -168,7 +228,7 @@ SfbLoadSettings (VOID)
     AsciiStrnCpyS (mSfbBootAssetPath, sizeof (mSfbBootAssetPath), Cursor,
                    sizeof (mSfbBootAssetPath) - 1);
   } else if (AsciiStrnCmp (Record, "SFC3|", 5) == 0 &&
-      Record[5] >= '0' && Record[5] < '0' + SFB_THEME_COUNT &&
+      Record[5] >= '0' && Record[5] < '0' + 4 &&
       Record[6] == '|' &&
       Record[7] >= '0' && Record[7] <= '2' &&
       Record[8] == '|' &&
@@ -176,7 +236,7 @@ SfbLoadSettings (VOID)
       Record[10] == '|' &&
       (Record[11] == '0' || Record[11] == '1') &&
       Record[12] == '|') {
-    mSfbTheme = Record[5] - '0';
+    SfbImportLegacyTheme (Record[5] - '0');
     mSfbLockMode = Record[7] - '0';
     mSfbLanguage = Record[9] - '0';
     mSfbDescriptions = (BOOLEAN)(Record[11] == '1');
@@ -189,11 +249,11 @@ SfbLoadSettings (VOID)
     }
     mSfbPin[4] = '\0';
   } else if (AsciiStrnCmp (Record, "SFC2|", 5) == 0 &&
-             Record[5] >= '0' && Record[5] < '0' + SFB_THEME_COUNT &&
+             Record[5] >= '0' && Record[5] < '0' + 4 &&
              Record[6] == '|' && Record[7] >= '0' && Record[7] <= '2' &&
              Record[8] == '|' && (Record[9] == '0' || Record[9] == '1') &&
              Record[10] == '|' && Record[12] == '|') {
-    mSfbTheme = Record[5] - '0';
+    SfbImportLegacyTheme (Record[5] - '0');
     mSfbLockMode = Record[7] - '0';
     mSfbLanguage = Record[9] - '0';
     for (Index = 0; Index < 4; Index++) {
@@ -205,12 +265,12 @@ SfbLoadSettings (VOID)
     }
     mSfbPin[4] = '\0';
   } else if (AsciiStrnCmp (Record, "SFC1|", 5) == 0 &&
-             Record[5] >= '0' && Record[5] < '0' + SFB_THEME_COUNT &&
+             Record[5] >= '0' && Record[5] < '0' + 4 &&
              Record[6] == '|' &&
              Record[7] >= '0' && Record[7] <= '2' &&
              Record[8] == '|') {
     /* Backward-compatible import of the first settings format. */
-    mSfbTheme = Record[5] - '0';
+    SfbImportLegacyTheme (Record[5] - '0');
     mSfbLockMode = Record[7] - '0';
     for (Index = 0; Index < 4; Index++) {
       if (Record[9 + Index] < '0' || Record[9 + Index] > '9') {
@@ -230,8 +290,8 @@ SfbSaveSettings (VOID)
 {
   CHAR8  Record[SFB_STORE_SLOT_BYTES];
 
-  AsciiSPrint (Record, sizeof (Record), "SFC4|%u|%u|%u|%u|%u|%u|%a|%a|%a",
-               (UINT32)mSfbTheme, (UINT32)mSfbLockMode,
+  AsciiSPrint (Record, sizeof (Record), "SFC5|%u|%u|%u|%u|%u|%u|%u|%a|%a|%a",
+               (UINT32)mSfbBase, (UINT32)mSfbAccent, (UINT32)mSfbLockMode,
                (UINT32)mSfbLanguage, mSfbDescriptions ? 1U : 0U,
                (UINT32)mSfbBootVisual, (UINT32)mSfbBootPosition,
                mSfbPin, mSfbBootAssetLabel, mSfbBootAssetPath);
@@ -249,7 +309,14 @@ UINTN
 SfbUiTheme (VOID)
 {
   SfbLoadSettings ();
-  return mSfbTheme;
+  return mSfbBase;
+}
+
+UINTN
+SfbUiAccent (VOID)
+{
+  SfbLoadSettings ();
+  return mSfbAccent;
 }
 
 BOOLEAN
@@ -1438,7 +1505,7 @@ SfbDrawDescriptionCard (IN CONST CHAR16 *Title, IN CONST CHAR16 *Description)
   BoxWidth = Width - 2 * CANOE_UI_STATUS_INSET;
   BoxY = Height - CANOE_UI_FOOTER_HEIGHT - BoxHeight - 34;
   SfbGfxFill (BoxX + 12, BoxY + 14, BoxWidth, BoxHeight,
-              &mSfbColorBackground);
+              &mSfbColorShadow);
   SfbGfxFill (BoxX, BoxY, BoxWidth, BoxHeight, &mSfbColorSurface);
   SfbGfxFill (BoxX, BoxY, 6, BoxHeight, &mSfbColorPrimary);
   SfbGfxFill (BoxX, BoxY, BoxWidth, 3, &mSfbColorPrimary);
@@ -1750,21 +1817,49 @@ SfbShowEnteringMenu (VOID)
 
 STATIC
 CONST CHAR16 *
-SfbThemeName (VOID)
+SfbBaseName (VOID)
 {
   if (mSfbLanguage != 0) {
-    switch (mSfbTheme) {
-    case 1: return L"Purple";
-    case 2: return L"Green";
-    case 3: return L"Orange";
-    default: return L"Blue";
+    switch (mSfbBase) {
+    case 1: return L"Porcelain";
+    case 2: return L"Smoke";
+    case 3: return L"OLED Black";
+    default: return L"Graphite";
     }
   }
-  switch (mSfbTheme) {
-  case 1: return L"紫色";
-  case 2: return L"绿色";
-  case 3: return L"橙色";
-  default: return L"蓝色";
+  switch (mSfbBase) {
+  case 1: return L"瓷白";
+  case 2: return L"雾灰";
+  case 3: return L"纯黑";
+  default: return L"石墨";
+  }
+}
+
+STATIC
+CONST CHAR16 *
+SfbAccentName (VOID)
+{
+  if (mSfbLanguage != 0) {
+    switch (mSfbAccent) {
+    case 1: return L"Cyan";
+    case 2: return L"Coral";
+    case 3: return L"Mint";
+    case 4: return L"Amber";
+    case 5: return L"Rose";
+    case 6: return L"Lime";
+    case 7: return L"Violet";
+    default: return L"Monochrome";
+    }
+  }
+  switch (mSfbAccent) {
+  case 1: return L"青蓝";
+  case 2: return L"珊瑚";
+  case 3: return L"薄荷";
+  case 4: return L"琥珀";
+  case 5: return L"玫红";
+  case 6: return L"青柠";
+  case 7: return L"紫罗兰";
+  default: return L"单色";
   }
 }
 
@@ -1904,20 +1999,24 @@ SfbRunSettings (VOID)
   SFB_KEY  Key;
 
   while (TRUE) {
-    CHAR16  Theme[48];
+    CHAR16  Base[48];
+    CHAR16  Accent[48];
     CHAR16  Language[48];
     CHAR16  Lock[48];
     CHAR16  Descriptions[48];
     CHAR16  BootVisual[64];
     CHAR16  BootPosition[48];
-    UINTN   AssetRow = (mSfbBootVisual == 2) ? 6 : MAX_UINTN;
-    UINTN   PinRow = 6 + ((mSfbBootVisual == 2) ? 1 : 0);
+    UINTN   AssetRow = (mSfbBootVisual == 2) ? 7 : MAX_UINTN;
+    UINTN   PinRow = 7 + ((mSfbBootVisual == 2) ? 1 : 0);
     UINTN   BackRow = PinRow + ((mSfbLockMode == SFB_LOCK_PIN) ? 1 : 0);
     UINTN   Count = BackRow + 1;
 
-    UnicodeSPrint (Theme, sizeof (Theme),
-                   mSfbLanguage == 0 ? L"配色主题    %s" : L"Color theme    %s",
-                   SfbThemeName ());
+    UnicodeSPrint (Base, sizeof (Base),
+                   mSfbLanguage == 0 ? L"明暗基底    %s" : L"Neutral base    %s",
+                   SfbBaseName ());
+    UnicodeSPrint (Accent, sizeof (Accent),
+                   mSfbLanguage == 0 ? L"强调颜色    %s" : L"Accent color    %s",
+                   SfbAccentName ());
     UnicodeSPrint (Language, sizeof (Language),
                    mSfbLanguage == 0 ? L"语言    中文" : L"Language    English");
     UnicodeSPrint (Lock, sizeof (Lock),
@@ -1942,12 +2041,13 @@ SfbRunSettings (VOID)
     SfbBeginScreen (L"Settings",
                     mSfbLanguage == 0 ? L"选择一项进行更改"
                                       : L"Select an item to change");
-    SfbDrawRow ((BOOLEAN)(Cursor == 0), L"COLOR", Theme);
-    SfbDrawRow ((BOOLEAN)(Cursor == 1), L"LANG", Language);
-    SfbDrawRow ((BOOLEAN)(Cursor == 2), L"LOCK", Lock);
-    SfbDrawRow ((BOOLEAN)(Cursor == 3), L"INFO", Descriptions);
-    SfbDrawRow ((BOOLEAN)(Cursor == 4), L"COLOR", BootVisual);
-    SfbDrawRow ((BOOLEAN)(Cursor == 5), L"INFO", BootPosition);
+    SfbDrawRow ((BOOLEAN)(Cursor == 0), L"COLOR", Base);
+    SfbDrawRow ((BOOLEAN)(Cursor == 1), L"COLOR", Accent);
+    SfbDrawRow ((BOOLEAN)(Cursor == 2), L"LANG", Language);
+    SfbDrawRow ((BOOLEAN)(Cursor == 3), L"LOCK", Lock);
+    SfbDrawRow ((BOOLEAN)(Cursor == 4), L"INFO", Descriptions);
+    SfbDrawRow ((BOOLEAN)(Cursor == 5), L"COLOR", BootVisual);
+    SfbDrawRow ((BOOLEAN)(Cursor == 6), L"INFO", BootPosition);
     if (AssetRow != MAX_UINTN) {
       SfbDrawRow ((BOOLEAN)(Cursor == AssetRow), L"FILES",
                   mSfbBootAssetPath[0] == '\0'
@@ -1964,12 +2064,13 @@ SfbRunSettings (VOID)
     Key = SfbWaitForKey (mSfbDescriptions ? 2000 : 0);
     if (Key == SfbKeyTimeout && mSfbDescriptions) {
       CONST CHAR16 *TipTitle;
-      if (Cursor == 0) TipTitle = Theme;
-      else if (Cursor == 1) TipTitle = Language;
-      else if (Cursor == 2) TipTitle = Lock;
-      else if (Cursor == 3) TipTitle = Descriptions;
-      else if (Cursor == 4) TipTitle = BootVisual;
-      else if (Cursor == 5) TipTitle = BootPosition;
+      if (Cursor == 0) TipTitle = Base;
+      else if (Cursor == 1) TipTitle = Accent;
+      else if (Cursor == 2) TipTitle = Language;
+      else if (Cursor == 3) TipTitle = Lock;
+      else if (Cursor == 4) TipTitle = Descriptions;
+      else if (Cursor == 5) TipTitle = BootVisual;
+      else if (Cursor == 6) TipTitle = BootPosition;
       else if (Cursor == AssetRow) TipTitle = mSfbLanguage == 0 ? L"选择启动素材" : L"Choose launch asset";
       else if (mSfbLockMode == SFB_LOCK_PIN && Cursor == PinRow) {
         TipTitle = mSfbLanguage == 0 ? L"更改 PIN 密码" : L"Change PIN";
@@ -1982,14 +2083,19 @@ SfbRunSettings (VOID)
       continue;
     }
     if (Cursor == 0) {
-      mSfbTheme = (mSfbTheme + 1) % SFB_THEME_COUNT;
+      mSfbBase = (mSfbBase + 1) % CANOE_UI_BASE_COUNT;
       SfbApplyPalette ();
       SfbSaveSettings ();
     } else if (Cursor == 1) {
-      mSfbLanguage = (mSfbLanguage + 1) % 2;
+      mSfbAccent = (mSfbAccent + 1) % CANOE_UI_ACCENT_COUNT;
+      SfbApplyPalette ();
       SfbSaveSettings ();
       Cursor = 1;
     } else if (Cursor == 2) {
+      mSfbLanguage = (mSfbLanguage + 1) % 2;
+      SfbSaveSettings ();
+      Cursor = 2;
+    } else if (Cursor == 3) {
       UINTN  NewMode = (mSfbLockMode + 1) % 3;
 
       if (NewMode == SFB_LOCK_PIN) {
@@ -2001,19 +2107,19 @@ SfbRunSettings (VOID)
       }
       mSfbLockMode = NewMode;
       SfbSaveSettings ();
-      Cursor = 2;
-    } else if (Cursor == 3) {
-      mSfbDescriptions = (BOOLEAN)!mSfbDescriptions;
-      SfbSaveSettings ();
       Cursor = 3;
     } else if (Cursor == 4) {
-      mSfbBootVisual = (mSfbBootVisual + 1) % 3;
+      mSfbDescriptions = (BOOLEAN)!mSfbDescriptions;
       SfbSaveSettings ();
       Cursor = 4;
     } else if (Cursor == 5) {
-      mSfbBootPosition = (mSfbBootPosition + 1) % 3;
+      mSfbBootVisual = (mSfbBootVisual + 1) % 3;
       SfbSaveSettings ();
       Cursor = 5;
+    } else if (Cursor == 6) {
+      mSfbBootPosition = (mSfbBootPosition + 1) % 3;
+      SfbSaveSettings ();
+      Cursor = 6;
     } else if (Cursor == AssetRow) {
       if (SfbSelectBootAsset (mSfbBootAssetLabel,
                               sizeof (mSfbBootAssetLabel),
@@ -2102,36 +2208,38 @@ SfbSettingsDescription (IN UINTN Cursor)
 {
   if (mSfbLanguage == 0) {
     switch (Cursor) {
-    case 0: return L"切换整套界面的主题色，并立即预览效果。";
-    case 1: return L"在中文和英文界面之间切换。";
-    case 2: return L"选择关闭、简易按键锁或四位 PIN 密码锁。";
-    case 3: return L"控制菜单项停留两秒后是否显示功能说明。";
-    case 4: return L"选择关闭启动提示、极简启动卡或自定义 PNG/GIF。";
-    case 5: return L"将启动画面放在安全区的顶部、中央或底部。";
-    case 6: return mSfbBootVisual == 2
+    case 0: return L"独立选择石墨、瓷白、雾灰或纯黑界面基底。";
+    case 1: return L"在当前基底上自由混搭单色或七种强调颜色。";
+    case 2: return L"在中文和英文界面之间切换。";
+    case 3: return L"选择关闭、简易按键锁或四位 PIN 密码锁。";
+    case 4: return L"控制菜单项停留两秒后是否显示功能说明。";
+    case 5: return L"选择关闭启动提示、极简启动卡或自定义 PNG/GIF。";
+    case 6: return L"将启动画面放在安全区的顶部、中央或底部。";
+    case 7: return mSfbBootVisual == 2
                      ? L"从已挂载卷选择 PNG 或 GIF 启动素材。"
                      : (mSfbLockMode == SFB_LOCK_PIN
                           ? L"重新设置用于进入启动菜单的四位 PIN。"
                           : L"返回启动菜单。");
-    case 7: return (mSfbBootVisual == 2 && mSfbLockMode == SFB_LOCK_PIN)
+    case 8: return (mSfbBootVisual == 2 && mSfbLockMode == SFB_LOCK_PIN)
                      ? L"重新设置用于进入启动菜单的四位 PIN。"
                      : L"返回启动菜单。";
     default: return L"返回启动菜单。";
     }
   }
   switch (Cursor) {
-  case 0: return L"Switch the interface color theme and preview it immediately.";
-  case 1: return L"Switch the interface language between Chinese and English.";
-  case 2: return L"Choose no lock, the simple key lock, or a four-digit PIN.";
-  case 3: return L"Show or hide item descriptions after a two-second pause.";
-  case 4: return L"Choose no launch visual, the minimal card, or a custom PNG/GIF.";
-  case 5: return L"Place the launch visual at the top, center, or bottom safe area.";
-  case 6: return mSfbBootVisual == 2
+  case 0: return L"Choose a graphite, porcelain, smoke, or OLED-black neutral base.";
+  case 1: return L"Mix monochrome or any of seven accent colors with the current base.";
+  case 2: return L"Switch the interface language between Chinese and English.";
+  case 3: return L"Choose no lock, the simple key lock, or a four-digit PIN.";
+  case 4: return L"Show or hide item descriptions after a two-second pause.";
+  case 5: return L"Choose no launch visual, the minimal card, or a custom PNG/GIF.";
+  case 6: return L"Place the launch visual at the top, center, or bottom safe area.";
+  case 7: return mSfbBootVisual == 2
                    ? L"Choose a PNG or GIF launch asset from a mounted volume."
                    : (mSfbLockMode == SFB_LOCK_PIN
                         ? L"Change the four-digit PIN used to enter the boot menu."
                         : L"Return to the boot menu.");
-  case 7: return (mSfbBootVisual == 2 && mSfbLockMode == SFB_LOCK_PIN)
+  case 8: return (mSfbBootVisual == 2 && mSfbLockMode == SFB_LOCK_PIN)
                    ? L"Change the four-digit PIN used to enter the boot menu."
                    : L"Return to the boot menu.";
   default: return L"Return to the boot menu.";

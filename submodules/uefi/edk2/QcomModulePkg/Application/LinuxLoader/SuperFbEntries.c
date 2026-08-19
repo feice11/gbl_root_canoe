@@ -1134,8 +1134,9 @@ SfbLaunchEntry (IN CONST SFB_BOOT_ENTRY *Entry,
                                        (VOID **)&LoadedImage)) &&
       LoadedImage != NULL) {
     ClockValid = SfbUiClockOffsetSeconds (&ClockOffset);
-    UnicodeSPrint (UiOptions, sizeof (UiOptions), L"CUI3|%u|%u|%u|%u|%u",
+    UnicodeSPrint (UiOptions, sizeof (UiOptions), L"CUI4|%u|%u|%u|%u|%u|%u",
                    (UINT32)SfbUiLanguage (), (UINT32)SfbUiTheme (),
+                   (UINT32)SfbUiAccent (),
                    (UINT32)ClockOffset, ClockValid ? 1U : 0U,
                    SfbUiDescriptionsEnabled () ? 1U : 0U);
     LoadedImage->LoadOptions = UiOptions;
