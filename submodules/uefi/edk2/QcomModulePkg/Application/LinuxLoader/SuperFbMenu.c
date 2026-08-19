@@ -68,8 +68,8 @@ STATIC BOOLEAN                       mSfbTouchTracking = FALSE;
 STATIC BOOLEAN                       mSfbTouchGestureConsumed = FALSE;
 STATIC UINT64                        mSfbTouchStartY = 0;
 
-#define SFB_SELECTION_FRAMES    4
-#define SFB_SELECTION_FRAME_US  2500
+#define SFB_SELECTION_FRAMES    9
+#define SFB_SELECTION_FRAME_US  15000
 #define SFB_TOUCH_SWIPE_DIVISOR 16
 
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorBackground = { 0x18, 0x12, 0x0d, 0x00 };
@@ -357,24 +357,6 @@ SfbBlendColor (IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *From,
   Result.Red = (UINT8)((From->Red * Inverse + To->Red * Amount + 128) / 256);
   Result.Reserved = 0;
   return Result;
-}
-
-STATIC
-VOID
-SfbAnimateSelectionCard (IN UINTN X, IN UINTN Y, IN UINTN Width, IN UINTN Height)
-{
-  UINTN Frame;
-
-  if (!mSfbGraphical || mSfbSelectionAnimated) return;
-  for (Frame = 0; Frame < SFB_SELECTION_FRAMES; ++Frame) {
-    UINTN Linear = (Frame * 256) / (SFB_SELECTION_FRAMES - 1);
-    UINTN Ease = 256 - (((256 - Linear) * (256 - Linear)) / 256);
-    EFI_GRAPHICS_OUTPUT_BLT_PIXEL Color =
-      SfbBlendColor (&mSfbColorSurface, &mSfbColorPrimary, Ease);
-    SfbGfxFill (X, Y, Width, Height, &Color);
-    if (Frame + 1 < SFB_SELECTION_FRAMES) gBS->Stall (SFB_SELECTION_FRAME_US);
-  }
-  mSfbSelectionAnimated = TRUE;
 }
 
 STATIC
@@ -1500,13 +1482,35 @@ SfbDrawRowIcon (IN BOOLEAN Selected, IN CANOE_UI_ICON Icon,
     UINT16 TextSize = SfbGfxFitText (CANOE_UI_BODY_FONT,
                                     CANOE_UI_BODY_FONT_MIN,
                                     TextWidth, Text);
+    UINTN  Frame;
     TextSize = (UINT16)MIN ((UINTN)TextSize,
                             MAX ((UINTN)20, mSfbRowHeight - 16));
     UINTN  TextY = mSfbGfxY + (mSfbRowHeight - TextSize) / 2;
 
     if (Selected) {
-      SfbAnimateSelectionCard (CANOE_UI_SIDE_MARGIN, mSfbGfxY,
-                               CardWidth, mSfbRowHeight);
+      if (!mSfbSelectionAnimated) {
+        for (Frame = 0; Frame < SFB_SELECTION_FRAMES; Frame++) {
+          UINTN Linear = (Frame * 256) / (SFB_SELECTION_FRAMES - 1);
+          UINTN Ease = 256 - (((256 - Linear) * (256 - Linear)) / 256);
+          EFI_GRAPHICS_OUTPUT_BLT_PIXEL CardColor =
+            SfbBlendColor (&mSfbColorSurface, &mSfbColorPrimary, Ease);
+          EFI_GRAPHICS_OUTPUT_BLT_PIXEL ContentColor =
+            SfbBlendColor (&mSfbColorText, &mSfbColorBackground, Ease);
+
+          SfbGfxFill (CANOE_UI_SIDE_MARGIN, mSfbGfxY,
+                      CardWidth, mSfbRowHeight, &CardColor);
+          SfbGfxIcon (CANOE_UI_SIDE_MARGIN + 28, IconY, IconSize, Icon,
+                      &ContentColor);
+          SfbGfxText (TextX, TextY, TextSize, Text, &ContentColor);
+          if (Frame + 1 < SFB_SELECTION_FRAMES) {
+            gBS->Stall (SFB_SELECTION_FRAME_US);
+          }
+        }
+        mSfbSelectionAnimated = TRUE;
+      } else {
+        SfbGfxFill (CANOE_UI_SIDE_MARGIN, mSfbGfxY,
+                    CardWidth, mSfbRowHeight, &mSfbColorPrimary);
+      }
     } else {
       SfbGfxFill (CANOE_UI_SIDE_MARGIN, mSfbGfxY, CardWidth, mSfbRowHeight,
                   &mSfbColorSurface);

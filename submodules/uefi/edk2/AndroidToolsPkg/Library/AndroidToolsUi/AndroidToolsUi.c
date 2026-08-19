@@ -51,8 +51,8 @@ STATIC BOOLEAN                       mAtClockValid = FALSE;
 STATIC BOOLEAN                       mAtDescriptions = TRUE;
 STATIC BOOLEAN                       mAtSelectionAnimated = FALSE;
 
-#define AT_SELECTION_FRAMES    4
-#define AT_SELECTION_FRAME_US  2500
+#define AT_SELECTION_FRAMES    9
+#define AT_SELECTION_FRAME_US  15000
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mAtBackground;
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mAtSurface;
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mAtPrimary;
@@ -89,24 +89,6 @@ AtBlendColor (IN EFI_GRAPHICS_OUTPUT_BLT_PIXEL *From,
   Result.Red = (UINT8)((From->Red * Inverse + To->Red * Amount + 128) / 256);
   Result.Reserved = 0;
   return Result;
-}
-
-STATIC
-VOID
-AtAnimateSelectionCard (IN UINTN X, IN UINTN Y, IN UINTN Width, IN UINTN Height)
-{
-  UINTN Frame;
-
-  if (!mAtGraphical || mAtSelectionAnimated) return;
-  for (Frame = 0; Frame < AT_SELECTION_FRAMES; ++Frame) {
-    UINTN Linear = (Frame * 256) / (AT_SELECTION_FRAMES - 1);
-    UINTN Ease = 256 - (((256 - Linear) * (256 - Linear)) / 256);
-    EFI_GRAPHICS_OUTPUT_BLT_PIXEL Color =
-      AtBlendColor (&mAtSurface, &mAtPrimary, Ease);
-    AtGfxFill (X, Y, Width, Height, &Color);
-    if (Frame + 1 < AT_SELECTION_FRAMES) gBS->Stall (AT_SELECTION_FRAME_US);
-  }
-  mAtSelectionAnimated = TRUE;
 }
 
 STATIC
@@ -760,6 +742,7 @@ AtUiDrawRowIcon (IN BOOLEAN Selected, IN CANOE_UI_ICON Icon,
     UINTN TextX;
     UINTN TextWidth;
     UINTN TextY;
+    UINTN Frame;
     UINT16 TextSize;
     Width = mAtGop->Mode->Info->HorizontalResolution;
     CardWidth = Width - 2 * CANOE_UI_SIDE_MARGIN;
@@ -774,8 +757,29 @@ AtUiDrawRowIcon (IN BOOLEAN Selected, IN CANOE_UI_ICON Icon,
                             MAX ((UINTN)20, mAtRowHeight - 16));
     TextY = mAtY + (mAtRowHeight - TextSize) / 2;
     if (Selected) {
-      AtAnimateSelectionCard (CANOE_UI_SIDE_MARGIN, mAtY,
-                              CardWidth, mAtRowHeight);
+      if (!mAtSelectionAnimated) {
+        for (Frame = 0; Frame < AT_SELECTION_FRAMES; Frame++) {
+          UINTN Linear = (Frame * 256) / (AT_SELECTION_FRAMES - 1);
+          UINTN Ease = 256 - (((256 - Linear) * (256 - Linear)) / 256);
+          EFI_GRAPHICS_OUTPUT_BLT_PIXEL CardColor =
+            AtBlendColor (&mAtSurface, &mAtPrimary, Ease);
+          EFI_GRAPHICS_OUTPUT_BLT_PIXEL ContentColor =
+            AtBlendColor (&mAtText, &mAtBackground, Ease);
+
+          AtGfxFill (CANOE_UI_SIDE_MARGIN, mAtY,
+                     CardWidth, mAtRowHeight, &CardColor);
+          AtGfxIcon (CANOE_UI_SIDE_MARGIN + 28, IconY, IconSize, Icon,
+                     &ContentColor);
+          AtGfxText (TextX, TextY, TextSize, Text, &ContentColor);
+          if (Frame + 1 < AT_SELECTION_FRAMES) {
+            gBS->Stall (AT_SELECTION_FRAME_US);
+          }
+        }
+        mAtSelectionAnimated = TRUE;
+      } else {
+        AtGfxFill (CANOE_UI_SIDE_MARGIN, mAtY,
+                   CardWidth, mAtRowHeight, &mAtPrimary);
+      }
     } else {
       AtGfxFill (CANOE_UI_SIDE_MARGIN, mAtY, CardWidth, mAtRowHeight,
                  &mAtSurface);
