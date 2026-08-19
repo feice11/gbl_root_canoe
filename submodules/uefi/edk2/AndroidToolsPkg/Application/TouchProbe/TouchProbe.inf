@@ -1,0 +1,24 @@
+[Defines]
+  INF_VERSION = 0x00010006
+  BASE_NAME = TouchProbe
+  FILE_GUID = 12F735A1-1A91-45ED-92D3-5B746A5D39E0
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 0.1
+  ENTRY_POINT = TouchProbeEntry
+[Sources]
+  TouchProbe.c
+[Packages]
+  MdePkg/MdePkg.dec
+  AndroidToolsPkg/AndroidToolsPkg.dec
+[LibraryClasses]
+  AndroidToolsUi
+  BaseMemoryLib
+  DebugLib
+  MemoryAllocationLib
+  PrintLib
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+[Protocols]
+  gEfiAbsolutePointerProtocolGuid
+  gEfiSpiConfigurationProtocolGuid
+  gEfiSpiHcProtocolGuid

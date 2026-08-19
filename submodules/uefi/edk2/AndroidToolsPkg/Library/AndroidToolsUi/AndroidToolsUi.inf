@@ -19,6 +19,7 @@
 [Packages]
   MdePkg/MdePkg.dec
   AndroidToolsPkg/AndroidToolsPkg.dec
+  QcomModulePkg/QcomModulePkg.dec
 
 [LibraryClasses]
   BaseLib
@@ -28,6 +29,11 @@
   PrintLib
   UefiBootServicesTableLib
   UefiLib
+  UefiRuntimeServicesTableLib
 
 [Protocols]
+  gCanoeUiProtocolGuid
+  gEfiGraphicsOutputProtocolGuid
+  gEfiLoadedImageProtocolGuid
   gEfiSimpleTextInProtocolGuid
+  gChargerExProtocolGuid

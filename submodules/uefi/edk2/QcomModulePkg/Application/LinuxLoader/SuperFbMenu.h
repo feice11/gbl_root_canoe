@@ -15,6 +15,7 @@
 #include <Uefi.h>
 #include <Protocol/DevicePath.h>
 #include <Protocol/SimpleFileSystem.h>
+#include "CanoeUiStyle.h"
 
 /* The boot loader we look for on every FAT32 volume, and the optional ANSI
  * one-liner describing it. */
@@ -73,6 +74,7 @@ typedef enum {
   /* Built-in entries; no backing file, handled in code. */
   SfbEntryFastboot,
   SfbEntrySelector,
+  SfbEntrySettings,
   /* "Back" row at the foot of a submenu: returns to the parent menu. */
   SfbEntryBack,
   /* Power management actions offered at the end of the menu and on the
@@ -195,6 +197,9 @@ SfbIsEfiDriverFile (IN EFI_FILE_PROTOCOL *Root, IN CONST CHAR16 *Path);
 VOID
 SfbConnectAll (VOID);
 
+VOID
+SfbConnectLoadedDrivers (VOID);
+
 /*
  * Read an ANSI text file and return its first line as a Unicode string.
  * Out is left untouched when the file is missing or empty.
@@ -216,14 +221,17 @@ SfbGetVolumeLabel (IN EFI_FILE_PROTOCOL *Root,
 /*
  * The firmware on this platform rejects variables it does not know, so the two
  * things the menu has to remember outlive a reboot in the EFI System Partition
- * instead: two 1 KiB NUL-padded ASCII records written to the very end of the
+ * instead: three 1 KiB NUL-padded ASCII records written to the very end of the
  * partition, which is the only part of it that is safe to touch.
  */
 #define SFB_STORE_SLOT_BYTES  1024
-#define SFB_STORE_SLOTS       2
+#define SFB_STORE_SLOTS       3
 
-#define SFB_STORE_DEFAULT  0   /* the entry the menu timeout launches */
-#define SFB_STORE_CUSTOM   1   /* the single user-added menu entry */
+/* Settings occupies the newly reserved KiB immediately before the old store.
+ * Default/custom retain their original offsets from the end of the ESP. */
+#define SFB_STORE_SETTINGS  0   /* palette, lock mode, language and PIN */
+#define SFB_STORE_DEFAULT   1   /* the entry the menu timeout launches */
+#define SFB_STORE_CUSTOM    2   /* the single user-added menu entry */
 
 /*
  * Replace one record. Text is NUL-terminated ASCII of at most
@@ -238,6 +246,12 @@ SfbStoreWrite (IN UINTN Slot, IN CONST CHAR8 *Text);
  */
 EFI_STATUS
 SfbStoreRead (IN UINTN Slot, OUT CHAR8 *Out, IN UINTN OutBytes);
+
+EFI_STATUS
+SfbStoreWriteSnapshot (IN CONST VOID *Data, IN UINTN DataBytes);
+
+EFI_STATUS
+SfbCaptureScreen (VOID);
 
 /* ---- SuperFbEntries.c: entry list, persistence and launching ------------ */
 
@@ -335,6 +349,9 @@ SfbRunFileBrowser (VOID);
 VOID
 SfbShowFastbootMode (VOID);
 
+VOID
+SfbDrawFastbootScreen (IN BOOLEAN Connected, IN UINTN Cursor);
+
 /*
  * Clear the console, show "Entering Boot Menu", and hold for a few seconds so
  * a volume key still held from power-on is released before the menu starts
@@ -354,14 +371,22 @@ SfbShowEnteringMenu (VOID);
 VOID
 SfbShowBootingScreen (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen);
 
+VOID
+SfbUpdateBootingStage (IN CONST CHAR16 *Name, IN BOOLEAN ClearScreen,
+                       IN UINTN Stage);
+
 /* Wait for a key. TimeoutMs of 0 waits indefinitely. */
 SFB_KEY
 SfbWaitForKey (IN UINT32 TimeoutMs);
 
+/* Drain a carried power press and require a short input-quiet window. */
+VOID
+SfbUiDebounce (VOID);
+
 /* ---- shared console helpers (SuperFbMenu.c) ----------------------------- */
 
 /* Rows of list content a screen shows before it starts scrolling. */
-#define SFB_VISIBLE_ROWS  12
+#define SFB_VISIBLE_ROWS  CANOE_UI_VISIBLE_MAX
 
 VOID
 SfbBeginScreen (IN CONST CHAR16 *Title, IN CONST CHAR16 *Subtitle OPTIONAL);
@@ -373,6 +398,39 @@ VOID
 SfbDrawRow (IN BOOLEAN      Selected,
             IN CONST CHAR16 *Marker,
             IN CONST CHAR16 *Text);
+
+/* Select a 5-7 row adaptive layout for the next graphical screen. */
+VOID
+SfbSetVisibleRows (IN UINTN Rows);
+
+/* Semantic-icon row. FallbackMarker is used only by SimpleTextOut mode. */
+VOID
+SfbDrawRowIcon (IN BOOLEAN       Selected,
+                IN CANOE_UI_ICON Icon,
+                IN CONST CHAR16 *FallbackMarker,
+                IN CONST CHAR16 *Text);
+
+/* Translate fixed UI copy according to the persisted language. Dynamic entry
+ * names and paths must not be passed through this helper. */
+CONST CHAR16 *
+SfbLocalize (IN CONST CHAR16 *Text);
+
+/* Current visual preferences, loaded from the shared settings record. */
+UINTN
+SfbUiLanguage (VOID);
+
+UINTN
+SfbUiTheme (VOID);
+
+UINTN
+SfbUiAccent (VOID);
+
+BOOLEAN
+SfbUiDescriptionsEnabled (VOID);
+
+/* Return the Android-calibrated seconds added to the firmware RTC. */
+BOOLEAN
+SfbUiClockOffsetSeconds (OUT UINTN *OffsetSeconds);
 
 /* First row of the visible window, chosen to keep Cursor inside it. */
 UINTN

@@ -112,6 +112,7 @@
 [Protocols]
   gEfiSimpleTextInProtocolGuid
   gEfiSimpleTextOutProtocolGuid
+  gEfiLoadedImageProtocolGuid
   gEfiBlockIoProtocolGuid
   gEfiDiskIoProtocolGuid
   gEfiPartitionRecordGuid

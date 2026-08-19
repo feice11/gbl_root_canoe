@@ -1,6 +1,6 @@
 #/** @file
 #  AndroidToolsPkg platform description. Builds the standalone RebootTools,
-#  ArbTools and BLTools UEFI applications plus the shared AndroidToolsUi menu
+#  ArbTools, BLTools and MiniGames UEFI applications plus the shared UI
 #  library. The package is self-contained: it ports the r32 DeviceInfo and
 #  reboot/recovery code it needs and only relies on the standard EDK2 base
 #  classes, so it does not depend on the stripped QcomModulePkg build config.
@@ -94,3 +94,5 @@
   AndroidToolsPkg/Application/RebootTools/RebootTools.inf
   AndroidToolsPkg/Application/ArbTools/ArbTools.inf
   AndroidToolsPkg/Application/BLTools/BLTools.inf
+  AndroidToolsPkg/Application/MiniGames/MiniGames.inf
+  AndroidToolsPkg/Application/TouchProbe/TouchProbe.inf

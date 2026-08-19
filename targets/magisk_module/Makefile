@@ -10,12 +10,16 @@ submodule_uefi: copy_resources
 	cp ../../submodules/uefi/build/ArbTools.efi ./build/module/efisp/tools/ArbTools.efi
 	cp ../../submodules/uefi/build/BLTools.efi ./build/module/efisp/tools/BLTools.efi
 	cp ../../submodules/uefi/build/RebootTools.efi ./build/module/efisp/tools/RebootTools.efi
+	cp ../../submodules/uefi/build/MiniGames.efi ./build/module/efisp/tools/MiniGames.efi
+	cp ../../submodules/uefi/build/TouchProbe.efi ./build/module/efisp/tools/TouchProbe.efi
 submodule_patcher: copy_resources
 	cd ../../submodules/patcher && make build_android
 	cp ../../submodules/patcher/build/patch_abl_android ./build/module/bin/patch_abl
 submodule_ablfvextractor: copy_resources
 	cd ../../submodules/ablfvextractor && make build_android
 	cp ../../submodules/ablfvextractor/build/extractfv_android ./build/module/bin/extractfv
-build: submodule_uefi submodule_patcher submodule_ablfvextractor
+sfbshot: copy_resources
+	$(NDK_PATH)/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android31-clang -O2 -Wall -Wextra -o build/module/bin/sfbshot sfbshot.c
+build: submodule_uefi submodule_patcher submodule_ablfvextractor sfbshot
 	# zip
 	cd build/module && zip -r ../module_android.zip ./

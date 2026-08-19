@@ -71,11 +71,16 @@
 [Sources]
 	LinuxLoader.c
 	SuperFbMenu.h
+	SuperFbFont.h
 	SuperFbFat.c
 	SuperFbStore.c
 	SuperFbEntries.c
 	SuperFbMenu.c
 	SuperFbBrowser.c
+	SuperFbImage.c
+	SuperFbImage.h
+	CanoeIcons.h
+	SuperFbScreenshot.c
 
 [Packages]
 	ArmPkg/ArmPkg.dec
@@ -144,7 +149,12 @@
 	gEfiPartTypeSystemPartGuid
 
 [Protocols]
+	gCanoeUiProtocolGuid
+	gEfiAbsolutePointerProtocolGuid
 	gEfiSimpleTextInputExProtocolGuid
+	gEfiGraphicsOutputProtocolGuid
+	gEfiHiiImageDecoderProtocolGuid
+	gChargerExProtocolGuid
 	gEfiBlockIoProtocolGuid
 	gEfiLoadedImageProtocolGuid
 	gEfiDevicePathToTextProtocolGuid

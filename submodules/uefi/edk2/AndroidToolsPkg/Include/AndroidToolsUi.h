@@ -11,6 +11,7 @@
 #define __ANDROID_TOOLS_UI_H__
 
 #include <Uefi.h>
+#include "../../QcomModulePkg/Application/LinuxLoader/CanoeUiStyle.h"
 
 typedef enum {
   AtKeyTimeout = 0,
@@ -21,6 +22,20 @@ typedef enum {
 
 /* Rows of list content a screen shows before it starts scrolling. */
 #define AT_VISIBLE_ROWS  12
+
+/** Initialize graphics, language and palette inherited from BootMenu. */
+VOID
+AtUiInitialize (
+  IN EFI_HANDLE ImageHandle
+  );
+
+BOOLEAN
+AtUiIsChinese (VOID);
+
+CONST CHAR16 *
+AtUiLocalize (
+  IN CONST CHAR16 *Text
+  );
 
 /**
   Announce the menu and wait for the launching key to be released, then drain
@@ -42,6 +57,10 @@ AtUiWaitForKey (
   IN UINT32 TimeoutMs
   );
 
+/** Drain repeats until the key stream has remained quiet. */
+VOID
+AtUiDebounce (VOID);
+
 /** Clear the screen and print a title (and optional subtitle). **/
 VOID
 AtUiBeginScreen (
@@ -61,6 +80,41 @@ AtUiDrawRow (
   IN BOOLEAN       Selected,
   IN CONST CHAR16 *Marker,
   IN CONST CHAR16 *Text
+  );
+
+VOID
+AtUiSetVisibleRows (
+  IN UINTN Rows
+  );
+
+VOID
+AtUiDrawRowIcon (
+  IN BOOLEAN       Selected,
+  IN CANOE_UI_ICON Icon,
+  IN CONST CHAR16 *FallbackMarker,
+  IN CONST CHAR16 *Text
+  );
+
+/** Draw one normal content line using the shared graphical font. */
+VOID
+AtUiWriteLine (
+  IN CONST CHAR16 *Text
+  );
+
+/** Draw a centered large-value game/status screen with an optional detail. */
+VOID
+AtUiDrawFocusScreen (
+  IN CONST CHAR16 *Title,
+  IN CONST CHAR16 *Value,
+  IN CONST CHAR16 *Detail OPTIONAL,
+  IN UINTN         State
+  );
+
+/** Two-stage destructive confirmation. Cursor starts on Cancel. */
+BOOLEAN
+AtUiConfirmDanger (
+  IN CONST CHAR16 *Title,
+  IN CONST CHAR16 *Warning
   );
 
 /** First row of the visible window, chosen to keep Cursor inside it. **/
@@ -105,6 +159,16 @@ EFI_STATUS
 AtUiRunMenu (
   IN  CONST CHAR16  *Title,
   IN  CONST CHAR16  **Items,
+  IN  UINTN          Count,
+  OUT UINTN         *Selected,
+  IN  CONST CHAR16  *Footer OPTIONAL
+  );
+
+EFI_STATUS
+AtUiRunMenuWithDescriptions (
+  IN  CONST CHAR16  *Title,
+  IN  CONST CHAR16  **Items,
+  IN  CONST CHAR16  **Descriptions OPTIONAL,
   IN  UINTN          Count,
   OUT UINTN         *Selected,
   IN  CONST CHAR16  *Footer OPTIONAL

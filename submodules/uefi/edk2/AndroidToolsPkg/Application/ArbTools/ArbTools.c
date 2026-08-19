@@ -131,6 +131,7 @@ AtShowArbValues (
   if (CompareMem (Info.magic, DEVICE_MAGIC, DEVICE_MAGIC_SIZE) != 0) {
     AtUiShowMessage (L"DeviceInfo not initialized");
     AtUiWaitForKey (0);
+    AtUiDebounce ();
     return;
   }
 
@@ -153,13 +154,16 @@ AtShowArbValues (
       goto Out;
     }
     UnicodeSPrint (Lines[Used], 40 * sizeof (CHAR16),
-                   L"Slot %2u: 0x%016lx", (UINT32)Index, Val);
+                   AtUiIsChinese () ? L"槽位 %2u：0x%016lx"
+                                     : L"Slot %2u: 0x%016lx",
+                   (UINT32)Index, Val);
     Used++;
   }
 
   if (Used == 0) {
     AtUiShowMessage (L"All rollback slots are 0");
     AtUiWaitForKey (0);
+    AtUiDebounce ();
     goto Out;
   }
 
@@ -179,47 +183,18 @@ Out:
   }
 }
 
-/**
-  Require five separate confirmations, at least one second apart, before the
-  destructive write is allowed. The reset writes the DeviceInfo blob back
-  through the Verified Boot protocol, which is a TEE write that can lose keys,
-  so each confirm must be a deliberate action: a 1s stall (and input flush)
-  precedes every prompt, enforcing the interval and dropping any key held over
-  from the previous step.
-
-  Returns TRUE only if all five confirmations were given.
-**/
+/** Show the risk first, then a final Cancel/Confirm menu defaulting to Cancel. */
 STATIC
 BOOLEAN
-AtConfirmReset5x (
+AtConfirmReset (
   VOID
   )
 {
-  UINTN  Step;
-  AT_KEY Key;
-
-  for (Step = 1; Step <= 5; Step++) {
-    /* Enforce >=1s since the previous confirmation and drop any key held over
-     * from it, so each confirm is a separate deliberate action. */
-    gBS->Stall (1000000);  /* 1 second */
-    gST->ConIn->Reset (gST->ConIn, FALSE);
-
-    AtUiBeginScreen (L"Reset ARB Index", NULL);
-    Print (L"WARNING: this writes to the TEE and may lose keys.\r\n");
-    Print (L"\r\n   Confirm %u/5\r\n", (UINT32)Step);
-    Print (L"\r\nPower = confirm   Vol+/- = cancel\r\n");
-
-    Key = AtUiWaitForKey (0);
-    if (Key != AtKeySelect) {
-      AtUiShowMessage (L"Reset cancelled");
-      gBS->Stall (1000000);
-      return FALSE;
-    }
-  }
-
-  /* Final 1s interval before the destructive write begins. */
-  gBS->Stall (1000000);
-  return TRUE;
+  return AtUiConfirmDanger (
+           L"Reset ARB Index",
+           AtUiIsChinese ()
+             ? L"警告：此操作会写入 TEE，可能造成密钥丢失。"
+             : L"WARNING: this writes to the TEE and may lose keys.");
 }
 
 /**
@@ -234,7 +209,9 @@ AtResetArbValues (
   DeviceInfo  Info;
   EFI_STATUS  Status;
 
-  if (!AtConfirmReset5x ()) {
+  if (!AtConfirmReset ()) {
+    AtUiShowMessage (L"Reset cancelled");
+    gBS->Stall (1000000);
     return;
   }
 
@@ -265,6 +242,7 @@ AtResetArbValues (
 
   AtUiShowMessage (L"ARB index reset complete");
   AtUiWaitForKey (0);
+  AtUiDebounce ();
 }
 
 /* ---- entry point -------------------------------------------------------- */
@@ -281,8 +259,20 @@ ArbToolsEntry (
     L"Reset ARB Value",
     L"Back",
   };
+  STATIC CONST CHAR16 *DescriptionsEn[] = {
+    L"Read and display all non-zero anti-rollback indexes.",
+    L"Reset anti-rollback indexes after a two-stage safety confirmation.",
+    L"Return to the Android Tools menu.",
+  };
+  STATIC CONST CHAR16 *DescriptionsZh[] = {
+    L"读取并显示所有非零的防回滚索引。",
+    L"经过二段式安全确认后重置防回滚索引。",
+    L"返回 Android Tools 菜单。",
+  };
   UINTN      Sel;
   EFI_STATUS Status;
+
+  AtUiInitialize (ImageHandle);
 
   /*
    * The power press that selected us in the super-fastboot menu is often still
@@ -292,8 +282,10 @@ ArbToolsEntry (
   AtUiEnterMenu (L"ARB Tools");
 
   while (TRUE) {
-    Status = AtUiRunMenu (L"ARB Tools", Items, ARRAY_SIZE (Items), &Sel,
-                          L"Vol+/- move, power select");
+    Status = AtUiRunMenuWithDescriptions (
+               L"ARB Tools", Items,
+               AtUiIsChinese () ? DescriptionsZh : DescriptionsEn,
+               ARRAY_SIZE (Items), &Sel, L"Vol+/- move, power select");
     if (EFI_ERROR (Status)) {
       continue;
     }

@@ -2,12 +2,12 @@
  * Persistent settings for the super-fastboot boot menu.
  *
  * The firmware refuses EFI variables it does not already know about, so the
- * menu keeps its two settings in the EFI System Partition instead. Only the
+ * menu keeps its settings in the EFI System Partition instead. Only the
  * last megabyte of that partition is safe to write, so the store sits at the
- * very end of it: two 1 KiB NUL-padded ASCII records, back to back, ending on
+ * very end of it: three 1 KiB NUL-padded ASCII records, back to back, ending on
  * the partition's last byte.
  *
- *   [ ... file system ... | 1 MiB scratch ... | rec 0 | rec 1 ] end of ESP
+ *   [ ... file system ... | scratch ... | settings | default | custom ] end
  *
  * Nothing here goes through the file system: the records must survive the ESP
  * being written by an operating system that knows nothing about them, and a
@@ -33,6 +33,9 @@
 CONST CHAR8 *gSfbStoreModuleTag = "SuperFbStore";
 
 #define SFB_STORE_BYTES  (SFB_STORE_SLOT_BYTES * SFB_STORE_SLOTS)
+#define SFB_SNAPSHOT_BYTES  (SIZE_1MB - SFB_STORE_BYTES)
+#define SFB_SNAPSHOT_SLOT_BYTES  (SFB_SNAPSHOT_BYTES / 2)
+#define SFB_SNAPSHOT_SEQUENCE_OFFSET  24
 
 /* Refuse anything too small to have the megabyte of slack we were promised. */
 #define SFB_STORE_MIN_PARTITION_BYTES  SIZE_1MB
@@ -496,3 +499,52 @@ SfbStoreWrite (IN UINTN Slot, IN CONST CHAR8 *Text)
   return Status;
 }
 
+EFI_STATUS
+SfbStoreWriteSnapshot (IN CONST VOID *Data, IN UINTN DataBytes)
+{
+  EFI_STATUS Status;
+  UINT64 Offset;
+  EFI_LBA Lba;
+  UINTN BlockSize, Skip, Blocks, Pages = 0;
+  VOID *Buffer = NULL;
+  UINT8 Magic[4];
+
+  if (Data == NULL || DataBytes < sizeof (Magic) ||
+      DataBytes > SFB_SNAPSHOT_SLOT_BYTES ||
+      DataBytes < SFB_SNAPSHOT_SEQUENCE_OFFSET + sizeof (UINT32))
+    return EFI_INVALID_PARAMETER;
+  Status = SfbResolveStore (); if (EFI_ERROR (Status)) return Status;
+  if (mSfbStore.BlockIo->Media->ReadOnly) return EFI_WRITE_PROTECTED;
+  Offset = mSfbStore.Offset - SFB_SNAPSHOT_BYTES;
+  BlockSize = mSfbStore.BlockIo->Media->BlockSize;
+  Lba = Offset / BlockSize; Skip = (UINTN)(Offset % BlockSize);
+  Blocks = (Skip + SFB_SNAPSHOT_BYTES + BlockSize - 1) / BlockSize;
+  Status = SfbReadBlocks (mSfbStore.BlockIo, Lba, Blocks, &Buffer, &Pages);
+  if (EFI_ERROR (Status)) return Status;
+  {
+    UINT8 *Slot[2];UINT32 Sequence[2]={0,0},Next;UINTN Target;
+    Slot[0]=(UINT8 *)Buffer+Skip;Slot[1]=Slot[0]+SFB_SNAPSHOT_SLOT_BYTES;
+    if(CompareMem(Slot[0],"SFSS",4)==0)CopyMem(&Sequence[0],Slot[0]+SFB_SNAPSHOT_SEQUENCE_OFFSET,sizeof(UINT32));
+    if(CompareMem(Slot[1],"SFSS",4)==0)CopyMem(&Sequence[1],Slot[1]+SFB_SNAPSHOT_SEQUENCE_OFFSET,sizeof(UINT32));
+    Target=(CompareMem(Slot[0],"SFSS",4)!=0)?0:
+           (CompareMem(Slot[1],"SFSS",4)!=0)?1:
+           (Sequence[0]<=Sequence[1]?0:1);
+    Next=MAX(Sequence[0],Sequence[1])+1;if(Next==0)Next=1;
+    CopyMem (Magic, Data, sizeof (Magic));
+    ZeroMem (Slot[Target], SFB_SNAPSHOT_SLOT_BYTES);
+    CopyMem (Slot[Target], Data, DataBytes);
+    CopyMem (Slot[Target]+SFB_SNAPSHOT_SEQUENCE_OFFSET,&Next,sizeof(Next));
+    ZeroMem (Slot[Target], sizeof (Magic));
+    Status = mSfbStore.BlockIo->WriteBlocks (mSfbStore.BlockIo,
+        mSfbStore.BlockIo->Media->MediaId, Lba, Blocks * BlockSize, Buffer);
+    if (!EFI_ERROR (Status)) Status = mSfbStore.BlockIo->FlushBlocks (mSfbStore.BlockIo);
+    if (!EFI_ERROR (Status)) {
+      CopyMem (Slot[Target], Magic, sizeof (Magic));
+      Status = mSfbStore.BlockIo->WriteBlocks (mSfbStore.BlockIo,
+          mSfbStore.BlockIo->Media->MediaId, Lba, Blocks * BlockSize, Buffer);
+      if (!EFI_ERROR (Status)) Status = mSfbStore.BlockIo->FlushBlocks (mSfbStore.BlockIo);
+    }
+  }
+  FreeAlignedPages (Buffer, Pages);
+  return Status;
+}

@@ -10,6 +10,7 @@ submodule_uefi: copy_resources
 	cp ../../submodules/uefi/build/ArbTools.efi ./build/toolkit/efisp/tools/ArbTools.efi
 	cp ../../submodules/uefi/build/BLTools.efi ./build/toolkit/efisp/tools/BLTools.efi
 	cp ../../submodules/uefi/build/RebootTools.efi ./build/toolkit/efisp/tools/RebootTools.efi
+	cp ../../submodules/uefi/build/TouchProbe.efi ./build/toolkit/efisp/tools/TouchProbe.efi
 submodule_patcher: copy_resources
 	cd ../../submodules/patcher && make build_android
 	cp ../../submodules/patcher/build/patch_abl_android ./build/toolkit/bin/patch_abl

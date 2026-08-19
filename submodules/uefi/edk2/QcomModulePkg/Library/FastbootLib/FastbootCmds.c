@@ -89,6 +89,7 @@ found at
 #include <Protocol/DiskIo.h>
 #include <Protocol/EFIUsbDevice.h>
 #include <Protocol/EFIUbiFlasher.h>
+#include <Protocol/LoadedImage.h>
 #include <Protocol/SimpleTextIn.h>
 #include <Protocol/SimpleTextOut.h>
 
@@ -148,6 +149,7 @@ STATIC CHAR8 StrSocVersion[MAX_RSP_SIZE];
 STATIC CHAR8 LogicalBlkSizeStr[MAX_RSP_SIZE];
 STATIC CHAR8 EraseBlkSizeStr[MAX_RSP_SIZE];
 STATIC CHAR8 MaxDownloadSizeStr[MAX_RSP_SIZE];
+STATIC CHAR8 MaxFetchSizeStr[MAX_RSP_SIZE];
 
 
 #define MAX_DISPLAY_PANEL_OVERRIDE 256
@@ -2398,8 +2400,10 @@ IsEfiInBootImg (boot_img_hdr *Hdr, UINT32 Size, VOID **EfiData, UINT32 *EfiSize)
 STATIC EFI_STATUS
 BootEfiImage (VOID *Data, UINT32 Size)
 {
-  EFI_STATUS  Status;
-  EFI_HANDLE  ImageHandle = NULL;
+  STATIC CHAR16              ForceMenuOption[] = L"superfb-menu";
+  EFI_STATUS                 Status;
+  EFI_HANDLE                 ImageHandle = NULL;
+  EFI_LOADED_IMAGE_PROTOCOL  *LoadedImage = NULL;
 
   Status = gBS->LoadImage (
                   FALSE,
@@ -2412,6 +2416,21 @@ BootEfiImage (VOID *Data, UINT32 Size)
   if (EFI_ERROR (Status)) {
     DEBUG ((EFI_D_ERROR, "LoadImage failed: %r\n", Status));
     return Status;
+  }
+
+  /* A fastboot-booted copy is a one-shot interactive session. Tell the child
+   * loader to show its menu unconditionally instead of immediately following
+   * the default entry persisted by the installed BDS. */
+  Status = gBS->HandleProtocol (
+                  ImageHandle,
+                  &gEfiLoadedImageProtocolGuid,
+                  (VOID **)&LoadedImage
+                  );
+  if (!EFI_ERROR (Status) && LoadedImage != NULL) {
+    LoadedImage->LoadOptions = ForceMenuOption;
+    LoadedImage->LoadOptionsSize = sizeof (ForceMenuOption);
+  } else {
+    DEBUG ((EFI_D_WARN, "Cannot set EFI force-menu load option: %r\n", Status));
   }
 
   Status = gBS->StartImage (ImageHandle, NULL, NULL);
@@ -2731,6 +2750,15 @@ FastbootCommandSetup (IN VOID *Base, IN UINT64 Size)
   AsciiSPrint (MaxDownloadSizeStr,
                   sizeof (MaxDownloadSizeStr), "%ld", MaxDownLoadSize);
   FastbootPublishVar ("max-download-size", MaxDownloadSizeStr);
+
+#ifdef ENABLE_UPDATE_PARTITIONS_CMDS
+  /* The host checks this variable before it ever sends fetch:<partition>.
+   * CmdFetch already streams larger partitions as a sequence of requests, so
+   * advertise one transfer-buffer-sized chunk. */
+  AsciiSPrint (MaxFetchSizeStr, sizeof (MaxFetchSizeStr), "0x%x",
+               USB_BUFFER_SIZE);
+  FastbootPublishVar ("max-fetch-size", MaxFetchSizeStr);
+#endif
 
 
   AsciiSPrint (FullProduct, sizeof (FullProduct), "%a", PRODUCT_NAME);
