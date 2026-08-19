@@ -148,6 +148,7 @@
 
 [Protocols]
 	gCanoeUiProtocolGuid
+	gEfiAbsolutePointerProtocolGuid
 	gEfiSimpleTextInputExProtocolGuid
 	gEfiGraphicsOutputProtocolGuid
 	gEfiHiiImageDecoderProtocolGuid

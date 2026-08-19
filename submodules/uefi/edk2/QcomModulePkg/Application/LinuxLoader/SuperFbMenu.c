@@ -1,8 +1,9 @@
 /*
  * Console UI for the super-fastboot boot menu.
  *
- * Three keys drive everything: volume up and volume down move the cursor, and
- * power confirms.
+ * Volume up/down move the cursor and power confirms. Graphical firmware may
+ * additionally expose touch through Absolute Pointer; vertical swipes map to
+ * the same cursor actions so every screen keeps one input contract.
  *
  * Copyright (c) 2026, contributors to the canoe ABL tree.
  * SPDX-License-Identifier: BSD-3-Clause
@@ -22,6 +23,7 @@
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
 #include <Library/UefiRuntimeServicesTableLib.h>
+#include <Protocol/AbsolutePointer.h>
 #include <Protocol/EFIChargerEx.h>
 #include <Protocol/GraphicsOutput.h>
 #include <Protocol/CanoeUi.h>
@@ -60,9 +62,15 @@ STATIC UINTN                         mSfbVisibleRows = CANOE_UI_VISIBLE_MIN;
 STATIC BOOLEAN                       mSfbClockCalibrationLoaded = FALSE;
 STATIC UINTN                         mSfbClockOffsetSeconds = 0;
 STATIC BOOLEAN                       mSfbSelectionAnimated = FALSE;
+STATIC EFI_ABSOLUTE_POINTER_PROTOCOL *mSfbTouch = NULL;
+STATIC BOOLEAN                       mSfbTouchInitialized = FALSE;
+STATIC BOOLEAN                       mSfbTouchTracking = FALSE;
+STATIC BOOLEAN                       mSfbTouchGestureConsumed = FALSE;
+STATIC UINT64                        mSfbTouchStartY = 0;
 
 #define SFB_SELECTION_FRAMES    4
 #define SFB_SELECTION_FRAME_US  2500
+#define SFB_TOUCH_SWIPE_DIVISOR 16
 
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorBackground = { 0x18, 0x12, 0x0d, 0x00 };
 STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL mSfbColorSurface    = { 0x2d, 0x25, 0x1d, 0x00 };
@@ -1105,14 +1113,102 @@ SfbUiRule (VOID)
   SfbUiFullRow (SFB_ATTR_ACCENT, Rule);
 }
 
+/* Locate touch lazily because some platforms publish the absolute pointer only
+ * after the menu's driver connection pass. Absence is harmless: keypad input
+ * remains the primary handset fallback. */
+STATIC
+EFI_EVENT
+SfbTouchWaitEvent (VOID)
+{
+  EFI_STATUS  Status;
+
+  if (!mSfbTouchInitialized) {
+    mSfbTouchInitialized = TRUE;
+    Status = gBS->LocateProtocol (&gEfiAbsolutePointerProtocolGuid, NULL,
+                                   (VOID **)&mSfbTouch);
+    if (EFI_ERROR (Status) || mSfbTouch == NULL || mSfbTouch->Mode == NULL ||
+        mSfbTouch->WaitForInput == NULL ||
+        mSfbTouch->Mode->AbsoluteMaxY <= mSfbTouch->Mode->AbsoluteMinY) {
+      mSfbTouch = NULL;
+    } else {
+      DEBUG ((EFI_D_INFO, "SFB: absolute pointer touch input enabled\n"));
+    }
+  }
+
+  return mSfbTouch == NULL ? NULL : mSfbTouch->WaitForInput;
+}
+
+/* Translate one completed swipe threshold into the existing menu-key model.
+ * The gesture fires as soon as it crosses the threshold, then remains consumed
+ * until release so a single swipe cannot race through multiple rows. */
+STATIC
+SFB_KEY
+SfbReadTouchGesture (VOID)
+{
+  EFI_ABSOLUTE_POINTER_STATE  State;
+  EFI_STATUS                  Status;
+  UINT64                      Delta;
+  UINT64                      Range;
+  UINT64                      Threshold;
+  BOOLEAN                     Active;
+
+  if (mSfbTouch == NULL) {
+    return SfbKeyTimeout;
+  }
+
+  Status = mSfbTouch->GetState (mSfbTouch, &State);
+  if (EFI_ERROR (Status)) {
+    return SfbKeyTimeout;
+  }
+
+  Active = (BOOLEAN)((State.ActiveButtons & EFI_ABSP_TouchActive) != 0);
+  if (!Active) {
+    mSfbTouchTracking = FALSE;
+    mSfbTouchGestureConsumed = FALSE;
+    return SfbKeyTimeout;
+  }
+
+  if (!mSfbTouchTracking) {
+    mSfbTouchTracking = TRUE;
+    mSfbTouchGestureConsumed = FALSE;
+    mSfbTouchStartY = State.CurrentY;
+    return SfbKeyTimeout;
+  }
+  if (mSfbTouchGestureConsumed) {
+    return SfbKeyTimeout;
+  }
+
+  Range = mSfbTouch->Mode->AbsoluteMaxY -
+          mSfbTouch->Mode->AbsoluteMinY;
+  Threshold = MAX (Range / SFB_TOUCH_SWIPE_DIVISOR, 1);
+  Delta = State.CurrentY >= mSfbTouchStartY
+            ? State.CurrentY - mSfbTouchStartY
+            : mSfbTouchStartY - State.CurrentY;
+  if (Delta < Threshold) {
+    return SfbKeyTimeout;
+  }
+
+  mSfbTouchGestureConsumed = TRUE;
+  if (State.CurrentY < mSfbTouchStartY) {
+    DEBUG ((EFI_D_VERBOSE, "SFB: touch swipe up\n"));
+    return SfbKeyDown;
+  }
+
+  DEBUG ((EFI_D_VERBOSE, "SFB: touch swipe down\n"));
+  return SfbKeyUp;
+}
+
 SFB_KEY
 SfbWaitForKey (IN UINT32 TimeoutMs)
 {
   EFI_STATUS     Status;
   EFI_EVENT      TimerEvent = NULL;
-  EFI_EVENT      WaitList[2];
+  EFI_EVENT      TouchEvent;
+  EFI_EVENT      WaitList[3];
   UINTN          WaitCount;
   UINTN          EventIndex;
+  UINTN          TimerEventIndex = MAX_UINTN;
+  UINTN          TouchEventIndex = MAX_UINTN;
   EFI_INPUT_KEY  Key;
   SFB_KEY        Result = SfbKeyTimeout;
 
@@ -1133,9 +1229,14 @@ SfbWaitForKey (IN UINT32 TimeoutMs)
 
   WaitList[0] = gST->ConIn->WaitForKey;
   WaitCount = 1;
+  TouchEvent = SfbTouchWaitEvent ();
+  if (TouchEvent != NULL) {
+    TouchEventIndex = WaitCount;
+    WaitList[WaitCount++] = TouchEvent;
+  }
   if (TimerEvent != NULL) {
-    WaitList[1] = TimerEvent;
-    WaitCount = 2;
+    TimerEventIndex = WaitCount;
+    WaitList[WaitCount++] = TimerEvent;
   }
 
   while (TRUE) {
@@ -1145,8 +1246,16 @@ SfbWaitForKey (IN UINT32 TimeoutMs)
       break;
     }
 
-    if (EventIndex == 1) {
+    if (EventIndex == TimerEventIndex) {
       break;
+    }
+
+    if (EventIndex == TouchEventIndex) {
+      Result = SfbReadTouchGesture ();
+      if (Result != SfbKeyTimeout) {
+        break;
+      }
+      continue;
     }
 
     Status = gST->ConIn->ReadKeyStroke (gST->ConIn, &Key);
